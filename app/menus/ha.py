@@ -286,7 +286,7 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
             names = ", ".join(status.found_names) or status.plugin_dir
             success(f"Plugin instalado ({names}).")
         elif status.parent_exists:
-            warning("No hay plugin_service ni plugin_service_v2 en custom_components/.")
+            warning("No se encontró ninguna carpeta plugin_service* en custom_components/.")
         else:
             error("No se encontró custom_components/ en la ruta esperada.")
 
@@ -376,7 +376,7 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
 
 def menu_ha_configuration(api: HasControllerAPI) -> None:
     while True:
-        section("HTTP Home Assistant (YAML + .storage)")
+        section("Actualizar Conectividad HTTP y Reverse Proxy")
         try:
             status = api.get_ha_configuration_status()
         except HasApiError as exc:
@@ -451,7 +451,7 @@ def menu_ha_admin(api: HasControllerAPI) -> None:
                 ("2", "Gestión de backups / espacio en disco"),
                 ("3", "Mantenimiento preventivo y limpieza sistemática"),
                 ("4", "Administrar plugin_service"),
-                ("5", "HTTP / trusted_proxies (YAML + .storage)"),
+                ("5", "Actualizar Archivo Conectividad HTTP y Reverse Proxy (configuration.yaml)"),
                 ("0", "Volver"),
             ],
         )

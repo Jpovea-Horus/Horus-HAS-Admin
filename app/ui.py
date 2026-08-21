@@ -671,7 +671,7 @@ def panel_plugin_service(status: PluginServiceStatus) -> None:
     body.append(f"Ruta padre: {status.parent_dir}\n", style="dim")
     body.append(f"Ruta activa: {status.plugin_dir}\n", style="dim")
     body.append(
-        "Nombres válidos: plugin_service | plugin_service_v2\n",
+        "Nombres válidos: plugin_service* (plugin_service, v2, v0...)\n",
         style="dim",
     )
 
@@ -691,7 +691,7 @@ def panel_plugin_service(status: PluginServiceStatus) -> None:
         body.append(", ".join(status.found_names) + "\n", style="success")
 
     if status.manifest_domain:
-        ok_domain = status.manifest_domain in ("plugin_service", "plugin_service_v2")
+        ok_domain = status.manifest_domain.lower().startswith("plugin_service")
         body.append("manifest domain: ", style="info")
         body.append(
             f"{status.manifest_domain}\n",
@@ -713,10 +713,10 @@ def panel_plugin_service(status: PluginServiceStatus) -> None:
         t.add_column("#", style="dim", width=3)
         t.add_column("Carpeta / archivo")
         t.add_column("Tipo")
-        accepted = {"plugin_service", "plugin_service_v2", "plugin_serviceV2"}
         for i, name in enumerate(status.components, 1):
-            kind = "plugin" if name in accepted else "otro"
-            style = "bold green" if name in accepted else ""
+            is_plugin = name.lower().startswith("plugin_service")
+            kind = "plugin" if is_plugin else "otro"
+            style = "bold green" if is_plugin else ""
             t.add_row(str(i), f"[{style}]{name}[/{style}]" if style else name, kind)
         console.print(t)
 
@@ -747,7 +747,7 @@ def panel_ha_configuration(status: HaConfigurationStatus) -> None:
         border = "yellow"
 
     body = Text()
-    body.append("HOME ASSISTANT — HTTP / PROXY\n", style="bold underline")
+    body.append("HOME ASSISTANT — CONECTIVIDAD HTTP / PROXY\n", style="bold underline")
     body.append("------------------------------\n")
     if status.ha_version:
         body.append(f"HA: {status.ha_version}\n", style="dim")

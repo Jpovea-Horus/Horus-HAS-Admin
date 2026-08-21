@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import tempfile
 import zipfile
@@ -26,8 +27,8 @@ from paths import (
 
 CUSTOM_COMPONENTS_DIR = REMOTE_CUSTOM_COMPONENTS
 PLUGIN_SERVICE_NAME = "plugin_service"
-# Nombres aceptados en el controlador (cualquiera cuenta como instalado)
-PLUGIN_FOLDER_NAMES = ("plugin_service", "plugin_service_v2", "plugin_serviceV2")
+# Patrón para detectar carpetas del componente (plugin_service, plugin_service_v2, plugin_service0, etc.)
+PLUGIN_SERVICE_PATTERN = r"^plugin_service.*"
 PLUGIN_SERVICE_DIR = f"{CUSTOM_COMPONENTS_DIR}/{PLUGIN_SERVICE_NAME}"
 DEFAULT_LOCAL_SOURCE = PATHS_LOCAL_SOURCE
 
@@ -46,7 +47,7 @@ class PluginServiceManager:
         self.ssh = ssh
 
     def get_status(self) -> PluginServiceStatus:
-        """Comprueba si existe plugin_service o plugin_service_v2 y lista vecinos."""
+        """Comprueba si existen carpetas plugin_service* y lista vecinos."""
         parent = CUSTOM_COMPONENTS_DIR
 
         parent_check = self.ssh.run(f"test -d {shlex.quote(parent)} && echo OK")
@@ -69,7 +70,10 @@ class PluginServiceManager:
         if listed.ok and listed.stdout.strip():
             components = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
 
-        found_names = [n for n in PLUGIN_FOLDER_NAMES if n in components]
+        # Detectar carpetas que empiecen con plugin_service (con cualquier sufijo)
+        pattern = re.compile(PLUGIN_SERVICE_PATTERN, re.IGNORECASE)
+        found_names = [c for c in components if pattern.match(c)]
+        
         # Preferir plugin_service canónico; si no, el primero encontrado
         active_name = (
             PLUGIN_SERVICE_NAME
@@ -108,12 +112,12 @@ class PluginServiceManager:
         )
 
     def remove(self) -> str:
-        """Elimina carpetas aceptadas (plugin_service / plugin_service_v2)."""
+        """Elimina carpetas detectadas como plugin_service (incluyendo sufijos)."""
         status = self.get_status()
         if not status.parent_exists:
             raise SSHCommandError(status.error or f"No existe {CUSTOM_COMPONENTS_DIR}")
         if not status.plugin_exists:
-            return "No hay carpeta plugin_service / plugin_service_v2 que eliminar."
+            return "No hay carpetas plugin_service que eliminar."
 
         removed: list[str] = []
         for name in status.found_names:
@@ -132,7 +136,7 @@ class PluginServiceManager:
     def install(self, local_path: str, replace: bool = True) -> str:
         """
         Sube la carpeta local al remoto como plugin_service.
-        El domain del manifest debe ser plugin_service (aunque la carpeta local
+        El domain del manifest debe empezar con plugin_service (aunque la carpeta local
         se llame plugin_serviceV2).
         """
         local = Path(local_path).expanduser()
