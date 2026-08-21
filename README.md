@@ -79,3 +79,7 @@ pip install -r requirements.txt
 ```
 
 *Nexxo — Investigación y desarrollo*
+=======
+# Horus-HAS-Admin
+aplicativo para administrar controlador nexxo 800
+19b9f69ee8fae785caf4b71b76c6f5b7c0e59dbe
