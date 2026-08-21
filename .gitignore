@@ -1,0 +1,39 @@
+# Build PyInstaller
+build/
+dist/
+*.toc
+*.pkg
+
+# Sesión local (no secretos de cuenta, sí huellas SSH)
+session_hosts.json
+ssh_known_hosts
+
+# Restos de edición
+*_temp_*.py
+ui.py_temp*
+
+# Binarios y assets externos (portabilidad)
+cloudflared.exe
+plugin_serviceV2/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Sistema
+Thumbs.db
+Desktop.ini
+.DS_Store
