@@ -23,6 +23,8 @@ from ha_users_manager import HaUsersManager
 from hostname_manager import HostnameManager
 from mqtt_manager import MqttManager
 from plugin_service_manager import PluginServiceManager
+from ha_integration_manager import HaIntegrationManager
+from admin_network_host_manager import AdminNetworkHostManager
 from models import (
     BackupEntry,
     BackupManagerStatus,
@@ -37,6 +39,8 @@ from models import (
     NetworkStatus,
     PluginServiceStatus,
     SessionInfo,
+    AdminNetworkInstallStatus,
+    HaIntegrationStatus,
     ZeroTierStatus,
     CloudflareStatus,
 )
@@ -57,6 +61,9 @@ class HasControllerAPI:
         self.mqtt = MqttManager(self.ssh)
         self.ha_users = HaUsersManager(self.ssh)
         self.plugin_service = PluginServiceManager(self.ssh)
+        self.admin_network_ha = HaIntegrationManager(self.ssh, "admin_network")
+        self.helper_manager = HaIntegrationManager(self.ssh, "helper_manager")
+        self.admin_network_host = AdminNetworkHostManager(self.ssh)
         self.ha_config = HaConfigManager(self.ssh)
         self.cloudflare = CloudflareManager(self.ssh)
         self.backups = BackupManager(self.ssh)
@@ -154,6 +161,41 @@ class HasControllerAPI:
         return self.plugin_service.install_from_github(
             ref=ref, token=token, replace=replace
         )
+
+    def get_admin_network_status(self) -> AdminNetworkInstallStatus:
+        return AdminNetworkInstallStatus(
+            ha=self.admin_network_ha.get_status(),
+            host=self.admin_network_host.get_status(),
+        )
+
+    def install_admin_network(self, local_path: str, replace: bool = True) -> str:
+        host_msg = self.admin_network_host.install(local_path)
+        ha_msg = self.admin_network_ha.install(local_path, replace=replace)
+        return f"{host_msg}\n{ha_msg}"
+
+    def install_admin_network_host(self, local_path: str) -> str:
+        return self.admin_network_host.install(local_path)
+
+    def install_admin_network_ha(self, local_path: str, replace: bool = True) -> str:
+        return self.admin_network_ha.install(local_path, replace=replace)
+
+    def remove_admin_network_ha(self) -> str:
+        return self.admin_network_ha.remove()
+
+    def remove_admin_network_host(self, wipe_env: bool = False) -> str:
+        return self.admin_network_host.remove(wipe_env=wipe_env)
+
+    def get_admin_network_api_key(self) -> str:
+        return self.admin_network_host.read_api_key()
+
+    def get_helper_manager_status(self) -> HaIntegrationStatus:
+        return self.helper_manager.get_status()
+
+    def install_helper_manager(self, local_path: str, replace: bool = True) -> str:
+        return self.helper_manager.install(local_path, replace=replace)
+
+    def remove_helper_manager(self) -> str:
+        return self.helper_manager.remove()
 
     def get_ha_configuration_status(self) -> HaConfigurationStatus:
         return self.ha_config.get_status()

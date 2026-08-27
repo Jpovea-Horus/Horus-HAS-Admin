@@ -251,3 +251,45 @@ class BackupManagerStatus:
     zwave_store_path: str = ""
     low_space: bool = False
     error: str = ""
+
+
+@dataclass
+class HaIntegrationStatus:
+    """Estado de un custom component en /config/custom_components."""
+
+    domain: str
+    parent_dir: str = REMOTE_CUSTOM_COMPONENTS
+    component_dir: str = ""
+    parent_exists: bool = False
+    component_exists: bool = False
+    components: list[str] = field(default_factory=list)
+    entries: list[str] = field(default_factory=list)
+    manifest_domain: str = ""
+    manifest_version: str = ""
+    error: str = ""
+
+
+@dataclass
+class AdminNetworkHostStatus:
+    """Estado del servicio host admin_network (systemd + API :8765)."""
+
+    install_dir: str = "/opt/admin_network"
+    env_file: str = "/etc/admin_network.env"
+    service_name: str = "admin_network"
+    dir_exists: bool = False
+    env_exists: bool = False
+    service_active: bool = False
+    service_enabled: bool = False
+    health_ok: bool = False
+    health_detail: str = ""
+    api_key: str = ""
+    port: int = 8765
+    error: str = ""
+
+
+@dataclass
+class AdminNetworkInstallStatus:
+    """Estado combinado: servicio host + integración HA."""
+
+    ha: HaIntegrationStatus
+    host: AdminNetworkHostStatus

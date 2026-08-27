@@ -2,7 +2,7 @@ import os
 import sys
 
 APP_NAME = "Gestor Nexxo 800"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 def get_base_path():
     """Retorna la ruta base de la aplicación (desempaquetada si es frozen)."""
@@ -36,6 +36,73 @@ def get_local_plugin_source():
     return os.path.join(os.getcwd(), "plugin_serviceV2")
 
 DEFAULT_LOCAL_SOURCE = get_local_plugin_source()
+
+INTEGRATION_ADMIN_NETWORK = "admin_network"
+INTEGRATION_HELPER = "helper_manager"
+
+_DEV_INTEGRATIONS_ROOT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(EXE_DIR))),
+    "Home Assistant",
+    "HAS - App",
+    "integrations",
+)
+_KNOWN_INTEGRATIONS_ROOT = r"C:\DataJpovea\Documentos\Home Assistant\HAS - App\integrations"
+
+
+def _integration_looks_valid(path: str, domain: str) -> bool:
+    """True if path is the integration root or the custom component folder."""
+    if not path or not os.path.isdir(path):
+        return False
+    if os.path.isfile(os.path.join(path, "manifest.json")):
+        return True
+    if os.path.isfile(os.path.join(path, "custom_components", domain, "manifest.json")):
+        return True
+    if domain == INTEGRATION_ADMIN_NETWORK and os.path.isfile(os.path.join(path, "host", "install.sh")):
+        return True
+    return False
+
+
+def _integration_candidate_paths(domain: str) -> list[str]:
+    env_root = (os.environ.get("HAS_INTEGRATIONS_DIR") or "").strip()
+    paths: list[str] = []
+    if env_root:
+        paths.append(os.path.join(env_root, domain))
+    paths.extend(
+        [
+            os.path.join(EXE_DIR, "integrations", domain),
+            os.path.join(BASE_PATH, "integrations", domain),
+            os.path.join(os.getcwd(), "integrations", domain),
+            os.path.join(_KNOWN_INTEGRATIONS_ROOT, domain),
+            os.path.join(_DEV_INTEGRATIONS_ROOT, domain),
+        ]
+    )
+    # Unique while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for p in paths:
+        key = os.path.normcase(os.path.normpath(p))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(p)
+    return unique
+
+
+def find_integration_dir(domain: str) -> str:
+    """Ruta local por defecto de una integración (admin_network / helper_manager)."""
+    candidates = _integration_candidate_paths(domain)
+    for path in candidates:
+        if _integration_looks_valid(path, domain):
+            return path
+    return candidates[0] if candidates else os.path.join(os.getcwd(), "integrations", domain)
+
+
+def get_local_admin_network_source() -> str:
+    return find_integration_dir(INTEGRATION_ADMIN_NETWORK)
+
+
+def get_local_helper_manager_source() -> str:
+    return find_integration_dir(INTEGRATION_HELPER)
 
 def get_cloudflared_exe():
     # Opción 1: Al lado del .exe

@@ -23,12 +23,14 @@ from models import (
     BackupManagerStatus,
     CellularStatus,
     HaConfigurationStatus,
+    HaIntegrationStatus,
     HaUser,
     HaUsersStatus,
     MaintenanceStatus,
     MqttDiagnosticStatus,
     PluginServiceStatus,
     SystemHealthStatus,
+    AdminNetworkInstallStatus,
     WifiNetwork,
     NetworkDevice,
     ConnectionProfile,
@@ -733,6 +735,114 @@ def panel_plugin_service(status: PluginServiceStatus) -> None:
         for i, name in enumerate(status.plugin_entries, 1):
             t2.add_row(str(i), name)
         console.print(t2)
+
+
+def panel_admin_network(status: AdminNetworkInstallStatus) -> None:
+    """Panel host + custom component admin_network."""
+    ha = status.ha
+    host = status.host
+    ready = ha.component_exists and host.service_active and host.health_ok
+    if ha.error or host.error:
+        border = "red"
+    elif ready:
+        border = "green"
+    elif ha.component_exists or host.dir_exists:
+        border = "yellow"
+    else:
+        border = "yellow"
+
+    body = Text()
+    body.append("ADMIN NETWORK — ADMIN DE RED\n", style="bold underline")
+    body.append("----------------------------\n")
+
+    body.append("Servicio host (/opt/admin_network)\n", style="accent")
+    body.append("Directorio: ", style="info")
+    body.append(
+        "existe\n" if host.dir_exists else "AUSENTE\n",
+        style="success" if host.dir_exists else "bold yellow",
+    )
+    body.append("systemd: ", style="info")
+    body.append(
+        "active\n" if host.service_active else "inactivo\n",
+        style="success" if host.service_active else "bold yellow",
+    )
+    body.append("API /health :8765: ", style="info")
+    body.append(
+        "OK\n" if host.health_ok else f"{host.health_detail or 'sin respuesta'}\n",
+        style="success" if host.health_ok else "bold yellow",
+    )
+    body.append("/etc/admin_network.env: ", style="info")
+    body.append(
+        "presente\n" if host.env_exists else "AUSENTE\n",
+        style="success" if host.env_exists else "bold yellow",
+    )
+    if host.api_key:
+        body.append("API key: ", style="info")
+        body.append(f"{host.api_key}\n", style="success")
+
+    body.append("\nIntegración HA (custom_components/admin_network)\n", style="accent")
+    body.append("custom_components/: ", style="info")
+    body.append(
+        "existe\n" if ha.parent_exists else "NO existe\n",
+        style="success" if ha.parent_exists else "bold red",
+    )
+    body.append("admin_network: ", style="info")
+    body.append(
+        "PRESENTE\n" if ha.component_exists else "AUSENTE\n",
+        style="success" if ha.component_exists else "bold yellow",
+    )
+    if ha.manifest_version:
+        body.append(f"versión: {ha.manifest_version}\n", style="dim")
+
+    body.append(
+        "\nTras instalar: Ajustes > Dispositivos y Servicios > Añadir > Admin Network\n",
+        style="dim",
+    )
+    body.append("Host 127.0.0.1  Puerto 8765  API key la de arriba.\n", style="dim")
+
+    if ha.error:
+        body.append(f"\nHA: {ha.error}\n", style="bold red")
+    if host.error:
+        body.append(f"\nHost: {host.error}\n", style="bold red")
+
+    console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+
+def panel_helper_manager(status: HaIntegrationStatus) -> None:
+    """Panel custom component helper_manager."""
+    if status.error and not status.parent_exists:
+        border = "red"
+    elif status.component_exists:
+        border = "green"
+    else:
+        border = "yellow"
+
+    body = Text()
+    body.append("HELPER MANAGER — ADMIN AUXILIARES\n", style="bold underline")
+    body.append("---------------------------------\n")
+    body.append(f"Ruta: {status.component_dir}\n", style="dim")
+    body.append("custom_components/: ", style="info")
+    body.append(
+        "existe\n" if status.parent_exists else "NO existe\n",
+        style="success" if status.parent_exists else "bold red",
+    )
+    body.append("helper_manager: ", style="info")
+    body.append(
+        "PRESENTE\n" if status.component_exists else "AUSENTE\n",
+        style="success" if status.component_exists else "bold yellow",
+    )
+    if status.manifest_version:
+        body.append(f"versión: {status.manifest_version}\n", style="dim")
+    if status.manifest_domain:
+        body.append(f"domain: {status.manifest_domain}\n", style="dim")
+    body.append(
+        "\nTras instalar: reinicie HA y añada 'Horus Helper Manager' en la UI.\n",
+        style="dim",
+    )
+    if status.error:
+        body.append(f"\n{status.error}\n", style="bold red")
+
+    console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
 
 
 def panel_ha_configuration(status: HaConfigurationStatus) -> None:

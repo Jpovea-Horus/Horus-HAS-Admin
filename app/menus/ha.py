@@ -15,10 +15,12 @@ from ui import (
     panel_backup_manager,
     panel_ha_configuration,
     panel_ha_users,
+    panel_helper_manager,
     panel_hostname,
     panel_maintenance,
     panel_plugin_service,
     panel_process_snapshot,
+    panel_admin_network,
     section,
     success,
     warning,
@@ -374,6 +376,204 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
             error(str(exc))
 
 
+def menu_admin_network(api: HasControllerAPI) -> None:
+    from paths import get_local_admin_network_source
+
+    default_local = get_local_admin_network_source()
+    while True:
+        section("Admin Network (admin de red)")
+        try:
+            status = api.get_admin_network_status()
+        except HasApiError as exc:
+            error(str(exc))
+            break
+
+        panel_admin_network(status)
+        if status.host.service_active and status.ha.component_exists:
+            success("Host e integración HA presentes.")
+        elif status.host.service_active:
+            warning("Servicio host OK; falta copiar la integración a custom_components.")
+        elif status.ha.component_exists:
+            warning("Integración HA copiada; falta el servicio host (nmcli).")
+        else:
+            warning("Admin Network no está instalado en este controlador.")
+
+        menu_options(
+            "Acciones",
+            [
+                ("1", "Actualizar verificación"),
+                ("2", "Instalar todo (host + integración HA)"),
+                ("3", "Instalar solo servicio host"),
+                ("4", "Instalar solo integración HA"),
+                ("5", "Mostrar API key"),
+                ("6", "Eliminar integración HA"),
+                ("7", "Eliminar servicio host"),
+                ("8", "Eliminar TODO (integración + servicio host)"),
+                ("9", "Reiniciar Home Assistant"),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                continue
+            if op == "2":
+                local = ask("Ruta local de admin_network", default=default_local)
+                if not local:
+                    warning("Ruta vacía.")
+                    continue
+                warning(
+                    "Se instalará el servicio en el SO (/opt/admin_network) y "
+                    "se copiará custom_components/admin_network."
+                )
+                if not confirm("¿Instalar Admin Network completo?", default=True):
+                    continue
+                info("Subiendo host e integración (pip/venv puede tardar)…")
+                success(api.install_admin_network(local, replace=True))
+                if confirm("¿Reiniciar Home Assistant ahora?", default=True):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+                info(
+                    "En HA: Añadir integración 'Admin Network' → "
+                    "127.0.0.1 / 8765 / API key mostrada arriba."
+                )
+            elif op == "3":
+                local = ask("Ruta local de admin_network o host/", default=default_local)
+                if not local:
+                    warning("Ruta vacía.")
+                    continue
+                if confirm("¿Instalar solo el servicio host?", default=True):
+                    info("Ejecutando install.sh en el controlador…")
+                    success(api.install_admin_network_host(local))
+            elif op == "4":
+                local = ask("Ruta local de admin_network", default=default_local)
+                if not local:
+                    warning("Ruta vacía.")
+                    continue
+                if confirm("¿Subir integración HA (reemplaza si existe)?", default=True):
+                    info("Subiendo custom_components/admin_network…")
+                    success(api.install_admin_network_ha(local, replace=True))
+                    if confirm("¿Reiniciar Home Assistant ahora?", default=True):
+                        info("Reiniciando HA…")
+                        success(api.restart_ha())
+            elif op == "5":
+                success(f"API key: {api.get_admin_network_api_key()}")
+            elif op == "6":
+                if not status.ha.component_exists:
+                    info("No hay integración HA que eliminar.")
+                    continue
+                if confirm("¿Eliminar custom_components/admin_network?", default=False):
+                    success(api.remove_admin_network_ha())
+            elif op == "7":
+                if not status.host.dir_exists and not status.host.service_active:
+                    info("No hay servicio host que eliminar.")
+                    continue
+                wipe = confirm("¿Borrar también /etc/admin_network.env (API key)?", default=False)
+                if confirm("¿Eliminar servicio host admin_network?", default=False):
+                    success(api.remove_admin_network_host(wipe_env=wipe))
+            elif op == "8":
+                if not status.ha.component_exists and not status.host.dir_exists:
+                    info("No hay nada que eliminar.")
+                    continue
+                if confirm("¿Eliminar Admin Network COMPLETO (HA + Host)?", default=False):
+                    wipe = confirm("¿Borrar también /etc/admin_network.env (API key)?", default=False)
+                    info("Eliminando integración HA…")
+                    try:
+                        success(api.remove_admin_network_ha())
+                    except Exception as e:
+                        error(f"Error HA: {e}")
+
+                    info("Eliminando servicio host…")
+                    try:
+                        success(api.remove_admin_network_host(wipe_env=wipe))
+                    except Exception as e:
+                        error(f"Error Host: {e}")
+            elif op == "9":
+                if confirm("¿Reiniciar Home Assistant?", default=False):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+            else:
+                warning("Opción no válida.")
+        except ValidationError as exc:
+            error(str(exc))
+        except HasApiError as exc:
+            error(str(exc))
+
+
+def menu_helper_manager(api: HasControllerAPI) -> None:
+    from paths import get_local_helper_manager_source
+
+    default_local = get_local_helper_manager_source()
+    while True:
+        section("Helper Manager (admin auxiliares)")
+        try:
+            status = api.get_helper_manager_status()
+        except HasApiError as exc:
+            error(str(exc))
+            break
+
+        panel_helper_manager(status)
+        if status.component_exists:
+            success("Integración presente en custom_components/.")
+        elif status.parent_exists:
+            warning("Falta helper_manager en custom_components/.")
+        else:
+            error("No se encontró custom_components/ en la ruta esperada.")
+
+        menu_options(
+            "Acciones",
+            [
+                ("1", "Actualizar verificación"),
+                ("2", "Subir / instalar desde carpeta local"),
+                ("3", "Eliminar helper_manager"),
+                ("4", "Reiniciar Home Assistant"),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                continue
+            if op == "2":
+                local = ask("Ruta local de helper_manager", default=default_local)
+                if not local:
+                    warning("Ruta vacía.")
+                    continue
+                if status.component_exists:
+                    warning("Ya existe; se reemplazará.")
+                if not confirm(f"¿Subir '{local}' → helper_manager?", default=True):
+                    continue
+                info("Subiendo por SFTP…")
+                success(api.install_helper_manager(local, replace=True))
+                if confirm("¿Reiniciar Home Assistant ahora?", default=True):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+                info(
+                    "En HA: Ajustes > Dispositivos y Servicios > Añadir > "
+                    "Horus Helper Manager."
+                )
+            elif op == "3":
+                if not status.component_exists:
+                    info("No hay nada que eliminar.")
+                    continue
+                if confirm("¿Eliminar custom_components/helper_manager?", default=False):
+                    success(api.remove_helper_manager())
+            elif op == "4":
+                if confirm("¿Reiniciar Home Assistant?", default=False):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+            else:
+                warning("Opción no válida.")
+        except ValidationError as exc:
+            error(str(exc))
+        except HasApiError as exc:
+            error(str(exc))
+
+
 def menu_ha_configuration(api: HasControllerAPI) -> None:
     while True:
         section("Actualizar Conectividad HTTP y Reverse Proxy")
@@ -452,6 +652,8 @@ def menu_ha_admin(api: HasControllerAPI) -> None:
                 ("3", "Mantenimiento preventivo y limpieza sistemática"),
                 ("4", "Administrar plugin_service"),
                 ("5", "Actualizar Archivo Conectividad HTTP y Reverse Proxy (configuration.yaml)"),
+                ("6", "Instalar Admin Network (admin de red)"),
+                ("7", "Instalar Helper Manager (admin auxiliares)"),
                 ("0", "Volver"),
             ],
         )
@@ -468,6 +670,10 @@ def menu_ha_admin(api: HasControllerAPI) -> None:
             menu_plugin_service(api)
         elif op == "5":
             menu_ha_configuration(api)
+        elif op == "6":
+            menu_admin_network(api)
+        elif op == "7":
+            menu_helper_manager(api)
         else:
             warning("Opción no válida.")
 

@@ -65,7 +65,7 @@ En el menú principal, **C** cambia de controlador o reconecta (útil tras IP es
 1. Estado de red  
 2. Ethernet (DHCP / estática)  
 3. Wi-Fi  
-4. Administrativa → hostname + Home Assistant (usuarios, backups, mantenimiento, `plugin_service`, `configuration.yaml`)  
+4. Administrativa → hostname + Home Assistant (usuarios, backups, mantenimiento, `plugin_service`, `configuration.yaml`, Admin Network, Helper Manager)  
 5. Conexión remota (ZeroTier, Cloudflare en el controlador)  
 6. Diagnóstico (htop + disco/memoria/`systemctl --failed`)  
 7. Corrección (cellular up/down, MQTT Z-Wave JS UI)

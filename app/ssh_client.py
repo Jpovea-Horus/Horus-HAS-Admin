@@ -130,7 +130,7 @@ class CloudflareAccessSock:
 
     def send(self, data: bytes) -> int:
         if self._closed or self.process.poll() is not None:
-            raise OSError(self._exit_message())
+            raise OSError(0, self._exit_message())
         assert self.process.stdin is not None
         self.process.stdin.write(data)
         self.process.stdin.flush()
@@ -154,7 +154,7 @@ class CloudflareAccessSock:
                         out = bytes(self._buf[:size])
                         del self._buf[:size]
                         return out
-                raise OSError(self._exit_message())
+                raise OSError(0, self._exit_message())
             if deadline is not None and time.monotonic() >= deadline:
                 raise socket.timeout("Timeout leyendo del túnel Cloudflare")
             time.sleep(0.01)

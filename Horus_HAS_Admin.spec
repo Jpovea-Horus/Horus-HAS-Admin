@@ -8,21 +8,32 @@ from PyInstaller.utils.hooks import collect_all
 SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
 APP_DIR = os.path.join(SPEC_DIR, "app")
 ICON_PATH = os.path.join(SPEC_DIR, "assets", "icon.ico")
+INTEGRATIONS_SRC = r"C:\DataJpovea\Documentos\Home Assistant\HAS - App\integrations"
 
 block_cipher = None
 
 _paramiko_datas, _paramiko_binaries, _paramiko_hidden = collect_all("paramiko")
 _rich_datas, _rich_binaries, _rich_hidden = collect_all("rich")
 
+extra_datas = [
+    (ICON_PATH, "assets"),
+    (os.path.join(SPEC_DIR, "cloudflared.exe"), "."),
+    (os.path.join(SPEC_DIR, "plugin_serviceV2"), "plugin_serviceV2"),
+]
+admin_network_src = os.path.join(INTEGRATIONS_SRC, "admin_network")
+helper_cc = os.path.join(INTEGRATIONS_SRC, "helper_manager", "custom_components")
+if os.path.isdir(os.path.join(admin_network_src, "custom_components")):
+    extra_datas.append((os.path.join(admin_network_src, "custom_components"), "integrations/admin_network/custom_components"))
+if os.path.isdir(os.path.join(admin_network_src, "host")):
+    extra_datas.append((os.path.join(admin_network_src, "host"), "integrations/admin_network/host"))
+if os.path.isdir(helper_cc):
+    extra_datas.append((helper_cc, "integrations/helper_manager/custom_components"))
+
 a = Analysis(
     [os.path.join(APP_DIR, "main.py")],
     pathex=[APP_DIR],
     binaries=_paramiko_binaries + _rich_binaries,
-    datas=_paramiko_datas + _rich_datas + [
-        (ICON_PATH, "assets"),
-        (os.path.join(SPEC_DIR, "cloudflared.exe"), "."),
-        (os.path.join(SPEC_DIR, "plugin_serviceV2"), "plugin_serviceV2"),
-    ],
+    datas=_paramiko_datas + _rich_datas + extra_datas,
     hiddenimports=_paramiko_hidden + _rich_hidden + [
         "controller",
         "ssh_client",
@@ -40,6 +51,8 @@ a = Analysis(
                 "ha_users_manager",
                 "ha_config_manager",
                 "plugin_service_manager",
+                "ha_integration_manager",
+                "admin_network_host_manager",
                 "backup_manager",
                 "menus",
                 "menus.connect",
