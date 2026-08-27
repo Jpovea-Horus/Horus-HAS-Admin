@@ -212,15 +212,15 @@ def menu_options(title: str, options: list[tuple[str, str]]) -> None:
     """options: lista de (clave, etiqueta)."""
     table = Table(
         show_header=False,
-        box=box.ROUNDED,
-        border_style="bright_blue",
-        padding=(0, 1),
+        box=None,
+        padding=(0, 2),
+        expand=True,
     )
     table.add_column("Op", style="bold bright_cyan", width=4)
     table.add_column("Descripción", style="menu")
     for key, label in options:
         table.add_row(key, label)
-    console.print(Panel(table, title=f"[subtitle]{title}[/subtitle]", border_style="cyan"))
+    console.print(Panel(table, title=f"[subtitle]{title}[/subtitle]", border_style="cyan", box=box.ROUNDED, padding=(1, 2)))
 
 
 def table_devices(devices: list, gateway: str) -> None:

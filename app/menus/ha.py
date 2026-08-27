@@ -641,19 +641,63 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
             error(str(exc))
 
 
+def menu_ha_spaces(api: HasControllerAPI) -> None:
+    while True:
+        menu_options(
+            "Gestión de Espacios",
+            [
+                ("1", "Gestión de backups / espacio en disco"),
+                ("2", "Mantenimiento y limpieza sistemática"),
+                ("", ""),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        if op == "1":
+            menu_backup_manager(api)
+        elif op == "2":
+            menu_maintenance(api)
+        else:
+            warning("Opción no válida.")
+
+
+def menu_ha_integrations(api: HasControllerAPI) -> None:
+    while True:
+        menu_options(
+            "Gestor de Integraciones",
+            [
+                ("1", "plugin_service (conexion energy)"),
+                ("2", "Admin Network (administrador de Redes)"),
+                ("3", "Helper Manager (administrador de Auxiliares)"),
+                ("", ""),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        if op == "1":
+            menu_plugin_service(api)
+        elif op == "2":
+            menu_admin_network(api)
+        elif op == "3":
+            menu_helper_manager(api)
+        else:
+            warning("Opción no válida.")
+
+
 def menu_ha_admin(api: HasControllerAPI) -> None:
     while True:
-        section("Administrar Home Assistant")
         menu_options(
-            "Home Assistant",
+            "Administrar Home Assistant",
             [
                 ("1", "Usuarios (crear / resetear contraseña)"),
-                ("2", "Gestión de backups / espacio en disco"),
-                ("3", "Mantenimiento preventivo y limpieza sistemática"),
-                ("4", "Administrar plugin_service"),
-                ("5", "Actualizar Archivo Conectividad HTTP y Reverse Proxy (configuration.yaml)"),
-                ("6", "Instalar Admin Network (admin de red)"),
-                ("7", "Instalar Helper Manager (admin auxiliares)"),
+                ("2", "Gestión de Espacios (backups, limpieza, disco)"),
+                ("3", "Configuración HTTP y Reverse Proxy (configuration.yaml)"),
+                ("4", "Gestor de Integraciones (energy, red, auxiliares)"),
+                ("", ""),
                 ("0", "Volver"),
             ],
         )
@@ -663,17 +707,11 @@ def menu_ha_admin(api: HasControllerAPI) -> None:
         if op == "1":
             menu_ha_users(api)
         elif op == "2":
-            menu_backup_manager(api)
+            menu_ha_spaces(api)
         elif op == "3":
-            menu_maintenance(api)
-        elif op == "4":
-            menu_plugin_service(api)
-        elif op == "5":
             menu_ha_configuration(api)
-        elif op == "6":
-            menu_admin_network(api)
-        elif op == "7":
-            menu_helper_manager(api)
+        elif op == "4":
+            menu_ha_integrations(api)
         else:
             warning("Opción no válida.")
 

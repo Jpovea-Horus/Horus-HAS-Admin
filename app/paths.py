@@ -69,10 +69,10 @@ def _integration_candidate_paths(domain: str) -> list[str]:
         paths.append(os.path.join(env_root, domain))
     paths.extend(
         [
+            os.path.join(_KNOWN_INTEGRATIONS_ROOT, domain),
             os.path.join(EXE_DIR, "integrations", domain),
             os.path.join(BASE_PATH, "integrations", domain),
             os.path.join(os.getcwd(), "integrations", domain),
-            os.path.join(_KNOWN_INTEGRATIONS_ROOT, domain),
             os.path.join(_DEV_INTEGRATIONS_ROOT, domain),
         ]
     )
