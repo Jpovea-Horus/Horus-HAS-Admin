@@ -22,12 +22,15 @@ extra_datas = [
 ]
 admin_network_src = os.path.join(INTEGRATIONS_SRC, "admin_network")
 helper_cc = os.path.join(INTEGRATIONS_SRC, "helper_manager", "custom_components")
+zwave_panel_src = os.path.join(INTEGRATIONS_SRC, "panel_zwave_js_ui")
 if os.path.isdir(os.path.join(admin_network_src, "custom_components")):
     extra_datas.append((os.path.join(admin_network_src, "custom_components"), "integrations/admin_network/custom_components"))
 if os.path.isdir(os.path.join(admin_network_src, "host")):
     extra_datas.append((os.path.join(admin_network_src, "host"), "integrations/admin_network/host"))
 if os.path.isdir(helper_cc):
     extra_datas.append((helper_cc, "integrations/helper_manager/custom_components"))
+if os.path.isdir(zwave_panel_src):
+    extra_datas.append((zwave_panel_src, "integrations/panel_zwave_js_ui"))
 
 a = Analysis(
     [os.path.join(APP_DIR, "main.py")],
@@ -53,6 +56,7 @@ a = Analysis(
                 "plugin_service_manager",
                 "ha_integration_manager",
                 "admin_network_host_manager",
+                "zwave_panel_manager",
                 "backup_manager",
                 "menus",
                 "menus.connect",

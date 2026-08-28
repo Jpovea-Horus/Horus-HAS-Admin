@@ -6,6 +6,7 @@ from controller import HasControllerAPI
 from exceptions import HasApiError, ValidationError
 from ui import (
     ask,
+    ask_confirmed_path,
     ask_int,
     ask_password,
     confirm,
@@ -21,6 +22,7 @@ from ui import (
     panel_plugin_service,
     panel_process_snapshot,
     panel_admin_network,
+    panel_zwave_panel,
     section,
     success,
     warning,
@@ -269,12 +271,13 @@ def menu_backup_manager(api: HasControllerAPI) -> None:
 
 
 def menu_plugin_service(api: HasControllerAPI) -> None:
+    from paths import get_local_plugin_source
     from plugin_service_manager import (
-        DEFAULT_LOCAL_SOURCE,
         GITHUB_DEFAULT_REF,
         GITHUB_REPO_URL,
     )
 
+    default_local = get_local_plugin_source()
     while True:
         section("plugin_service (custom component)")
         try:
@@ -322,10 +325,11 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
                     error("No se puede instalar: falta custom_components/.")
                     continue
                 info("La carpeta local puede llamarse plugin_serviceV2; en remoto será plugin_service.")
-                local = ask("Ruta local de la carpeta", default=DEFAULT_LOCAL_SOURCE)
+                local = ask_confirmed_path("plugin_service", default_local)
                 if not local:
                     warning("Ruta vacía.")
                     continue
+                default_local = local
                 if status.plugin_exists:
                     warning("Ya existe plugin_service en el controlador; se reemplazará.")
                     if not confirm("¿Eliminar la versión remota y subir la nueva?", default=True):
@@ -420,10 +424,11 @@ def menu_admin_network(api: HasControllerAPI) -> None:
             if op == "1":
                 continue
             if op == "2":
-                local = ask("Ruta local de admin_network", default=default_local)
+                local = ask_confirmed_path("admin_network", default_local)
                 if not local:
                     warning("Ruta vacía.")
                     continue
+                default_local = local
                 warning(
                     "Se instalará el servicio en el SO (/opt/admin_network) y "
                     "se copiará custom_components/admin_network."
@@ -440,18 +445,20 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                     "127.0.0.1 / 8765 / API key mostrada arriba."
                 )
             elif op == "3":
-                local = ask("Ruta local de admin_network o host/", default=default_local)
+                local = ask_confirmed_path("admin_network (o host/)", default_local)
                 if not local:
                     warning("Ruta vacía.")
                     continue
+                default_local = local
                 if confirm("¿Instalar solo el servicio host?", default=True):
                     info("Ejecutando install.sh en el controlador…")
                     success(api.install_admin_network_host(local))
             elif op == "4":
-                local = ask("Ruta local de admin_network", default=default_local)
+                local = ask_confirmed_path("admin_network", default_local)
                 if not local:
                     warning("Ruta vacía.")
                     continue
+                default_local = local
                 if confirm("¿Subir integración HA (reemplaza si existe)?", default=True):
                     info("Subiendo custom_components/admin_network…")
                     success(api.install_admin_network_ha(local, replace=True))
@@ -539,10 +546,11 @@ def menu_helper_manager(api: HasControllerAPI) -> None:
             if op == "1":
                 continue
             if op == "2":
-                local = ask("Ruta local de helper_manager", default=default_local)
+                local = ask_confirmed_path("helper_manager", default_local)
                 if not local:
                     warning("Ruta vacía.")
                     continue
+                default_local = local
                 if status.component_exists:
                     warning("Ya existe; se reemplazará.")
                 if not confirm(f"¿Subir '{local}' → helper_manager?", default=True):
@@ -562,6 +570,78 @@ def menu_helper_manager(api: HasControllerAPI) -> None:
                     continue
                 if confirm("¿Eliminar custom_components/helper_manager?", default=False):
                     success(api.remove_helper_manager())
+            elif op == "4":
+                if confirm("¿Reiniciar Home Assistant?", default=False):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+            else:
+                warning("Opción no válida.")
+        except ValidationError as exc:
+            error(str(exc))
+        except HasApiError as exc:
+            error(str(exc))
+
+
+def menu_zwave_panel(api: HasControllerAPI) -> None:
+    from paths import get_local_zwave_panel_source
+
+    default_local = get_local_zwave_panel_source()
+    while True:
+        section("Z-Wave JS UI (panel lateral)")
+        try:
+            status = api.get_zwave_panel_status()
+        except HasApiError as exc:
+            error(str(exc))
+            break
+
+        panel_zwave_panel(status)
+        if status.installed:
+            success("Panel Z-Wave JS UI presente (JS + panel_custom).")
+        elif status.js_exists or status.yaml_ok:
+            warning("Instalación incompleta: falta JS o panel_custom.")
+        else:
+            warning("El panel Z-Wave JS UI no está instalado en este controlador.")
+
+        menu_options(
+            "Acciones",
+            [
+                ("1", "Actualizar verificación"),
+                ("2", "Instalar / actualizar panel"),
+                ("3", "Eliminar panel Z-Wave"),
+                ("4", "Reiniciar Home Assistant"),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                continue
+            if op == "2":
+                local = ask_confirmed_path(
+                    "panel_zwave_js_ui (o zwave-panel.js)",
+                    default_local,
+                )
+                if not local:
+                    warning("Ruta vacía.")
+                    continue
+                default_local = local
+                if status.installed:
+                    warning("Ya existe; se reemplazará el JS y se verificará el YAML.")
+                if not confirm(f"¿Subir '{local}' y registrar panel_custom?", default=True):
+                    continue
+                info("Subiendo JS y parcheando configuration.yaml…")
+                success(api.install_zwave_panel(local, restart=False))
+                if confirm("¿Reiniciar Home Assistant ahora?", default=True):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+            elif op == "3":
+                if not status.js_exists and not status.yaml_ok and not status.has_iframe_zwave:
+                    info("No hay nada que eliminar.")
+                    continue
+                if confirm("¿Eliminar el panel Z-Wave (JS + YAML)?", default=False):
+                    success(api.remove_zwave_panel())
             elif op == "4":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
                     info("Reiniciando HA…")
@@ -671,6 +751,7 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                 ("1", "plugin_service (conexion energy)"),
                 ("2", "Admin Network (administrador de Redes)"),
                 ("3", "Helper Manager (administrador de Auxiliares)"),
+                ("4", "Z-Wave JS UI (panel lateral :8091)"),
                 ("", ""),
                 ("0", "Volver"),
             ],
@@ -684,6 +765,8 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
             menu_admin_network(api)
         elif op == "3":
             menu_helper_manager(api)
+        elif op == "4":
+            menu_zwave_panel(api)
         else:
             warning("Opción no válida.")
 
@@ -696,7 +779,7 @@ def menu_ha_admin(api: HasControllerAPI) -> None:
                 ("1", "Usuarios (crear / resetear contraseña)"),
                 ("2", "Gestión de Espacios (backups, limpieza, disco)"),
                 ("3", "Configuración HTTP y Reverse Proxy (configuration.yaml)"),
-                ("4", "Gestor de Integraciones (energy, red, auxiliares)"),
+                ("4", "Gestor de Integraciones (energy, red, auxiliares, zwave)"),
                 ("", ""),
                 ("0", "Volver"),
             ],

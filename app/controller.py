@@ -25,6 +25,7 @@ from mqtt_manager import MqttManager
 from plugin_service_manager import PluginServiceManager
 from ha_integration_manager import HaIntegrationManager
 from admin_network_host_manager import AdminNetworkHostManager
+from zwave_panel_manager import ZwavePanelManager
 from models import (
     BackupEntry,
     BackupManagerStatus,
@@ -41,6 +42,7 @@ from models import (
     SessionInfo,
     AdminNetworkInstallStatus,
     HaIntegrationStatus,
+    ZwavePanelStatus,
     ZeroTierStatus,
     CloudflareStatus,
 )
@@ -63,6 +65,7 @@ class HasControllerAPI:
         self.plugin_service = PluginServiceManager(self.ssh)
         self.admin_network_ha = HaIntegrationManager(self.ssh, "admin_network")
         self.helper_manager = HaIntegrationManager(self.ssh, "helper_manager")
+        self.zwave_panel = ZwavePanelManager(self.ssh)
         self.admin_network_host = AdminNetworkHostManager(self.ssh)
         self.ha_config = HaConfigManager(self.ssh)
         self.cloudflare = CloudflareManager(self.ssh)
@@ -196,6 +199,15 @@ class HasControllerAPI:
 
     def remove_helper_manager(self) -> str:
         return self.helper_manager.remove()
+
+    def get_zwave_panel_status(self) -> ZwavePanelStatus:
+        return self.zwave_panel.get_status()
+
+    def install_zwave_panel(self, local_js: str, restart: bool = False) -> str:
+        return self.zwave_panel.install(local_js, restart=restart)
+
+    def remove_zwave_panel(self) -> str:
+        return self.zwave_panel.remove()
 
     def get_ha_configuration_status(self) -> HaConfigurationStatus:
         return self.ha_config.get_status()

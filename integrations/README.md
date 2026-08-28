@@ -15,5 +15,9 @@ Coloque aquí las carpetas de las integraciones que desea administrar. El progra
 - `__init__.py` (Obligatorio)
 - `host/install.sh` (Obligatorio para el servicio del sistema)
 
+### 3. Z-Wave JS UI (panel lateral)
+`integrations/panel_zwave_js_ui/`
+- `zwave-panel.js` (Obligatorio)
+
 ---
 *Nota: Se ignoran automáticamente carpetas como `__pycache__`, `.git`, `venv` y `node_modules` durante la subida al controlador.*

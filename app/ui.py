@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass
+import os
 import re
 import sys
 
@@ -35,6 +36,7 @@ from models import (
     NetworkDevice,
     ConnectionProfile,
     CloudflareStatus,
+    ZwavePanelStatus,
 )
 from paths import APP_NAME, APP_VERSION
 
@@ -206,6 +208,22 @@ def confirm(message: str, default: bool = False) -> bool:
         return Confirm.ask(f"[warning]{message}[/warning]", default=default)
     except (EOFError, KeyboardInterrupt):
         return False
+
+
+def ask_confirmed_path(label: str, default_path: str = "") -> str:
+    """Pregunta si la ruta detectada es correcta; si no, permite pegar otra."""
+    default_path = (default_path or "").strip().strip('"').strip("'")
+    if default_path:
+        info(f"Ruta detectada de {label}:")
+        console.print(f"  [bold]{default_path}[/bold]")
+        if os.path.isdir(default_path) or os.path.isfile(default_path):
+            success("La ruta existe en este equipo.")
+        else:
+            warning("Esa ruta no existe en este equipo.")
+        if confirm("¿Esta es la dirección correcta?", default=True):
+            return default_path
+    pasted = ask(f"Pegue la nueva ruta de {label}", default="")
+    return pasted.strip().strip('"').strip("'")
 
 
 def menu_options(title: str, options: list[tuple[str, str]]) -> None:
@@ -837,6 +855,51 @@ def panel_helper_manager(status: HaIntegrationStatus) -> None:
         body.append(f"domain: {status.manifest_domain}\n", style="dim")
     body.append(
         "\nTras instalar: reinicie HA y añada 'Horus Helper Manager' en la UI.\n",
+        style="dim",
+    )
+    if status.error:
+        body.append(f"\n{status.error}\n", style="bold red")
+
+    console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+
+def panel_zwave_panel(status: ZwavePanelStatus) -> None:
+    """Panel lateral Z-Wave JS UI (www + panel_custom)."""
+    if status.error:
+        border = "red"
+    elif status.installed:
+        border = "green"
+    else:
+        border = "yellow"
+
+    body = Text()
+    body.append("Z-WAVE JS UI — PANEL LATERAL\n", style="bold underline")
+    body.append("----------------------------\n")
+    body.append(f"Config: {status.config_dir or '-'}\n", style="dim")
+    body.append("www/zwave-panel.js: ", style="info")
+    body.append(
+        "PRESENTE\n" if status.js_exists else "AUSENTE\n",
+        style="success" if status.js_exists else "bold yellow",
+    )
+    if status.js_path:
+        body.append(f"  {status.js_path}\n", style="dim")
+    body.append("configuration.yaml: ", style="info")
+    if not status.yaml_exists:
+        body.append("no existe\n", style="bold red")
+    else:
+        body.append("presente\n", style="success")
+    body.append("panel_custom zwave-ui-panel: ", style="info")
+    body.append(
+        "OK\n" if status.yaml_ok else "FALTA\n",
+        style="success" if status.yaml_ok else "bold yellow",
+    )
+    if status.has_iframe_zwave:
+        body.append("panel_iframe zwave (legado): ", style="info")
+        body.append("PRESENTE (se quita al instalar)\n", style="bold yellow")
+    body.append(
+        "\nIframe: LAN/ZeroTier → host:8091 · "
+        "Cloudflare → https://zwave-{host}.rhorus.com\n"
+        "Tras actualizar el JS, reinstale el panel y reinicie HA.\n",
         style="dim",
     )
     if status.error:

@@ -293,3 +293,18 @@ class AdminNetworkInstallStatus:
 
     ha: HaIntegrationStatus
     host: AdminNetworkHostStatus
+
+
+@dataclass
+class ZwavePanelStatus:
+    """Estado del panel lateral Z-Wave JS UI (www + panel_custom)."""
+
+    config_dir: str = ""
+    js_path: str = ""
+    yaml_path: str = ""
+    js_exists: bool = False
+    yaml_exists: bool = False
+    yaml_ok: bool = False
+    has_iframe_zwave: bool = False
+    installed: bool = False
+    error: str = ""
