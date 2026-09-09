@@ -42,6 +42,7 @@ from models import (
     SessionInfo,
     AdminNetworkInstallStatus,
     HaIntegrationStatus,
+    WifiDiagnoseStatus,
     ZwavePanelStatus,
     ZeroTierStatus,
     CloudflareStatus,
@@ -191,6 +192,12 @@ class HasControllerAPI:
     def get_admin_network_api_key(self) -> str:
         return self.admin_network_host.read_api_key()
 
+    def diagnose_wifi(self) -> WifiDiagnoseStatus:
+        return self.network.diagnose_wifi()
+
+    def repair_wifi(self, force_nm_restart: bool = True) -> str:
+        return self.network.repair_wifi(force_nm_restart=force_nm_restart)
+
     def get_helper_manager_status(self) -> HaIntegrationStatus:
         return self.helper_manager.get_status()
 
@@ -217,6 +224,9 @@ class HasControllerAPI:
 
     def ensure_ha_trusted_proxies(self, restart: bool = True, force: bool = False) -> str:
         return self.ha_config.ensure_trusted_proxies(restart=restart, force=force)
+
+    def set_ha_discovery(self, enabled: bool, restart: bool = True) -> str:
+        return self.ha_config.set_discovery(enabled=enabled, restart=restart)
 
     def restart_ha(self) -> str:
         return self.ha_config.restart_ha()
@@ -321,3 +331,6 @@ class HasControllerAPI:
 
     def delete_old_archives(self) -> str:
         return self.maintenance.delete_old_archives()
+
+    def delete_custom_component(self, name: str) -> str:
+        return self.maintenance.delete_custom_component(name)

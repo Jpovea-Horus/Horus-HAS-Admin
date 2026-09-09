@@ -798,6 +798,17 @@ def panel_admin_network(status: AdminNetworkInstallStatus) -> None:
         body.append("API key: ", style="info")
         body.append(f"{host.api_key}\n", style="success")
 
+    body.append("WiFi watchdog: ", style="info")
+    if host.wifi_watchdog_active:
+        body.append("activo (cada 5 min)\n", style="success")
+    elif host.wifi_watchdog_enabled:
+        body.append("habilitado pero inactivo\n", style="bold yellow")
+    else:
+        body.append(
+            "AUSENTE — reinstale host para auto-recovery\n",
+            style="bold yellow",
+        )
+
     body.append("\nIntegración HA (custom_components/admin_network)\n", style="accent")
     body.append("custom_components/: ", style="info")
     body.append(
@@ -962,6 +973,14 @@ def panel_ha_configuration(status: HaConfigurationStatus) -> None:
         style="success" if status.proxy_ok else "bold yellow",
     )
 
+    body.append("\nEscaneo Discovery: ", style="info")
+    if status.discovery_enabled:
+        body.append("ACTIVO\n", style="bold yellow")
+    else:
+        body.append("DESACTIVADO\n", style="success")
+    if status.discovery_detail:
+        body.append(f"  {status.discovery_detail}\n", style="dim")
+
     if status.error:
         body.append(f"\n{status.error}\n", style="bold red")
 
@@ -1076,6 +1095,11 @@ def panel_maintenance(status: MaintenanceStatus) -> None:
             body.append(f"  • {arc.split('/')[-1]}\n", style="dim")
         if len(status.old_archives) > 3:
             body.append(f"  ... y {len(status.old_archives)-3} más.\n", style="dim")
+
+    if status.custom_components:
+        body.append("\n[info]Custom Components:[/info]\n", style="subtitle")
+        for cc in status.custom_components:
+            body.append(f"  • {cc}\n", style="dim")
 
     if status.last_cleanup_summary:
         body.append(f"\n[info]Última acción:[/info] {status.last_cleanup_summary}\n", style="success")

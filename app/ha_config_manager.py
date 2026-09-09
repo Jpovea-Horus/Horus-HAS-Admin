@@ -27,6 +27,43 @@ _HORUS_CORS = (
     "https://develop.horussmartenergyapp.com",
 )
 
+# Componentes de discovery incluidos en default_config (escaneo de red).
+_DISCOVERY_COMPONENTS = frozenset({"dhcp", "ssdp", "zeroconf", "usb", "bluetooth"})
+
+# default_config (core) sin los de discovery — lista alineada con manifest HA.
+_DEFAULT_CONFIG_NO_DISCOVERY = (
+    "assist_pipeline",
+    "cloud",
+    "conversation",
+    "energy",
+    "file",
+    "go2rtc",
+    "history",
+    "homeassistant_alerts",
+    "logbook",
+    "media_source",
+    "mobile_app",
+    "my",
+    "stream",
+    "sun",
+    "usage_prediction",
+    "webhook",
+)
+
+_DISCOVERY_OFF_START = "# --- HORUS_DISCOVERY_OFF_START ---"
+_DISCOVERY_OFF_END = "# --- HORUS_DISCOVERY_OFF_END ---"
+_DISCOVERY_OFF_BLOCK = (
+    f"{_DISCOVERY_OFF_START}\n"
+    "# Escaneo de red desactivado (sin dhcp/ssdp/zeroconf/usb/bluetooth).\n"
+    + "\n".join(f"{name}:" for name in _DEFAULT_CONFIG_NO_DISCOVERY)
+    + f"\n{_DISCOVERY_OFF_END}\n"
+)
+
+_DEFAULT_CONFIG_RE = re.compile(r"(?m)^default_config:\s*(?:#.*)?$")
+_DISCOVERY_OFF_RE = re.compile(
+    rf"(?ms)^{re.escape(_DISCOVERY_OFF_START)}.*?^{re.escape(_DISCOVERY_OFF_END)}\s*\n?"
+)
+
 DEFAULT_CONFIGURATION_YAML = """# Loads default set of integrations. Do not remove.
 default_config:
 
@@ -97,9 +134,12 @@ class HaConfigManager:
                 re.search(r"use_x_frame_options\s*:\s*false\b", stripped, re.IGNORECASE)
             )
             status.http_ok = not status.has_http_block
+            self._fill_discovery_status(status, content)
         else:
             status.is_empty = True
             status.http_ok = True
+            status.discovery_enabled = True
+            status.discovery_detail = "Sin configuration.yaml (se asumirá default_config al crear)."
 
         self._fill_storage_status(status)
         parsed = self._parse_ha_version(version)
@@ -195,6 +235,122 @@ class HaConfigManager:
             self._container = container
             return f"Contenedor '{container}' reiniciado correctamente."
         raise SSHCommandError(f"Error al reiniciar '{container}': {res.stderr}")
+
+    def set_discovery(self, enabled: bool, restart: bool = True) -> str:
+        """Activa o desactiva el escaneo de red (dhcp/ssdp/zeroconf/usb/bluetooth)."""
+        status = self.get_status()
+        path = status.path or CONFIG_YAML_PATH
+
+        if not status.exists or status.is_empty:
+            raise SSHCommandError(
+                f"No hay configuration.yaml usable en {path}. "
+                "Aplique primero la plantilla base o configure HA."
+            )
+
+        raw = self.ssh.run(f"cat {shlex.quote(path)}").stdout
+        if not raw.strip():
+            raise SSHCommandError(f"configuration.yaml vacío: {path}")
+
+        if enabled:
+            if status.discovery_enabled and not _DISCOVERY_OFF_RE.search(raw):
+                msg = "Discovery ya está activo (default_config presente)."
+                if restart:
+                    return f"{msg} Reinicio no necesario."
+                return msg
+            new_content = self._enable_discovery_yaml(raw)
+            action = "Discovery ACTIVADO (restaurado default_config)."
+        else:
+            if not status.discovery_enabled:
+                msg = "Discovery ya está desactivado."
+                if restart:
+                    return f"{msg} Reinicio no necesario."
+                return msg
+            new_content = self._disable_discovery_yaml(raw)
+            action = (
+                "Discovery DESACTIVADO (sin dhcp/ssdp/zeroconf/usb/bluetooth)."
+            )
+
+        if new_content == raw:
+            raise SSHCommandError(
+                "No se pudo modificar configuration.yaml: "
+                "no se encontró default_config ni el bloque Horus de discovery."
+            )
+
+        backup_path = path + ".bak.horus.discovery"
+        backup = self.ssh.run(
+            f"cp {shlex.quote(path)} {shlex.quote(backup_path)} 2>/dev/null; echo OK",
+            use_sudo=True,
+        )
+        if backup.stdout.strip() != "OK" and not backup.ok:
+            raise SSHCommandError("No se pudo crear backup de configuration.yaml.")
+
+        self._write_remote_file(path, new_content)
+        verify = self.get_status()
+        if enabled and not verify.discovery_enabled:
+            raise SSHCommandError(
+                "Se escribió el YAML pero discovery sigue desactivado. "
+                f"Revise {path} (backup: {backup_path})."
+            )
+        if not enabled and verify.discovery_enabled:
+            raise SSHCommandError(
+                "Se escribió el YAML pero discovery sigue activo. "
+                f"Revise {path} (backup: {backup_path})."
+            )
+
+        msg = f"{action} Backup: {backup_path}."
+        if restart:
+            msg = f"{msg} {self.restart_ha()}"
+        return msg
+
+    @staticmethod
+    def _fill_discovery_status(status: HaConfigurationStatus, content: str) -> None:
+        has_default = bool(_DEFAULT_CONFIG_RE.search(content))
+        has_horus_off = bool(_DISCOVERY_OFF_RE.search(content))
+        if has_horus_off and not has_default:
+            status.discovery_enabled = False
+            status.discovery_detail = (
+                "Bloque Horus sin dhcp/ssdp/zeroconf/usb/bluetooth"
+            )
+        elif has_default:
+            status.discovery_enabled = True
+            status.discovery_detail = "default_config activo"
+        else:
+            # Sin default_config: comprobar si discovery está explícito.
+            explicit = [
+                name
+                for name in sorted(_DISCOVERY_COMPONENTS)
+                if re.search(rf"(?m)^{name}:\s*(?:#.*)?$", content)
+            ]
+            if explicit:
+                status.discovery_enabled = True
+                status.discovery_detail = f"Explícito: {', '.join(explicit)}"
+            else:
+                status.discovery_enabled = False
+                status.discovery_detail = "Sin default_config ni componentes de discovery"
+
+    @classmethod
+    def _disable_discovery_yaml(cls, raw: str) -> str:
+        if _DISCOVERY_OFF_RE.search(raw) and not _DEFAULT_CONFIG_RE.search(raw):
+            return raw
+        if not _DEFAULT_CONFIG_RE.search(raw):
+            return raw
+        return _DEFAULT_CONFIG_RE.sub(_DISCOVERY_OFF_BLOCK.rstrip("\n"), raw, count=1)
+
+    @classmethod
+    def _enable_discovery_yaml(cls, raw: str) -> str:
+        if _DISCOVERY_OFF_RE.search(raw):
+            return _DISCOVERY_OFF_RE.sub("default_config:\n", raw, count=1)
+        if _DEFAULT_CONFIG_RE.search(raw):
+            return raw
+        # Sin bloque Horus ni default_config: insertar al inicio útil.
+        lines = raw.splitlines(keepends=True)
+        insert_at = 0
+        for i, line in enumerate(lines):
+            if line.strip() and not line.lstrip().startswith("#"):
+                insert_at = i
+                break
+        lines.insert(insert_at, "default_config:\n\n")
+        return "".join(lines)
 
     def _ensure_legacy_yaml_http(self) -> tuple[bool, str]:
         """HAS pre-2026.8: trusted_proxies sigue viviendo en configuration.yaml."""

@@ -200,6 +200,8 @@ class HaConfigurationStatus:
     storage_proxy_ok: bool = False
     uses_storage_http: bool = False
     proxy_ok: bool = False
+    discovery_enabled: bool = True
+    discovery_detail: str = ""
 
 
 @dataclass
@@ -223,6 +225,7 @@ class MaintenanceStatus:
     old_archives: list[str] = field(default_factory=list)
     ha_db_size_mb: float = 0.0
     ha_db_alert: bool = False
+    custom_components: list[str] = field(default_factory=list)
     last_cleanup_summary: str = ""
     error: str = ""
 
@@ -284,6 +287,21 @@ class AdminNetworkHostStatus:
     health_detail: str = ""
     api_key: str = ""
     port: int = 8765
+    wifi_watchdog_active: bool = False
+    wifi_watchdog_enabled: bool = False
+    error: str = ""
+
+
+@dataclass
+class WifiDiagnoseStatus:
+    """Diagnóstico WiFi remoto (nmcli / rfkill / unavailable)."""
+
+    radio: str = ""
+    radio_enabled: bool = False
+    devices_raw: str = ""
+    unavailable: list[str] = field(default_factory=list)
+    healthy: bool = False
+    detail: str = ""
     error: str = ""
 
 

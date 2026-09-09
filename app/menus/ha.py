@@ -10,6 +10,7 @@ from ui import (
     ask_int,
     ask_password,
     confirm,
+    console,
     error,
     info,
     menu_options,
@@ -162,6 +163,8 @@ def menu_maintenance(api: HasControllerAPI) -> None:
             opts.insert(2, ("3", "Eliminar carpeta anidada basura (/config/config/)"))
         if status.old_archives:
             opts.insert(len(opts) - 1, ("4", "Eliminar archivos .zip/.tar.gz antiguos (>30 días)"))
+        if status.custom_components:
+            opts.insert(len(opts) - 1, ("5", "Eliminar carpeta en custom_components (limpieza)"))
 
         menu_options("Acciones de Mantenimiento", opts)
         op = ask("Opción")
@@ -182,6 +185,21 @@ def menu_maintenance(api: HasControllerAPI) -> None:
             elif op == "4" and status.old_archives:
                 if confirm(f"¿Eliminar {len(status.old_archives)} archivos antiguos?", default=False):
                     summary = api.delete_old_archives()
+                    success(summary)
+            elif op == "5" and status.custom_components:
+                info("Carpetas en custom_components:")
+                for cc in status.custom_components:
+                    console.print(f"  • [bold]{cc}[/bold]")
+                name = ask("Nombre de la carpeta a eliminar (vacío para cancelar)").strip()
+                if not name:
+                    info("Cancelado.")
+                    continue
+                if name not in status.custom_components:
+                    error(f"'{name}' no es una carpeta válida en custom_components.")
+                    continue
+                if confirm(f"¿ELIMINAR PERMANENTEMENTE '{name}'?", default=False):
+                    info(f"Eliminando '{name}'...")
+                    summary = api.delete_custom_component(name)
                     success(summary)
             else:
                 warning("Opción no válida.")
@@ -414,6 +432,8 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                 ("7", "Eliminar servicio host"),
                 ("8", "Eliminar TODO (integración + servicio host)"),
                 ("9", "Reiniciar Home Assistant"),
+                ("10", "Diagnosticar WiFi (wlan unavailable)"),
+                ("11", "Reparar WiFi ahora (reinicia NetworkManager si hace falta)"),
                 ("0", "Volver"),
             ],
         )
@@ -501,6 +521,28 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                 if confirm("¿Reiniciar Home Assistant?", default=False):
                     info("Reiniciando HA…")
                     success(api.restart_ha())
+            elif op == "10":
+                info("Diagnosticando WiFi…")
+                diag = api.diagnose_wifi()
+                if diag.healthy:
+                    success(f"{diag.detail} (radio={diag.radio})")
+                else:
+                    warning(f"{diag.detail} (radio={diag.radio})")
+                if diag.devices_raw:
+                    info(diag.devices_raw)
+                if not status.host.wifi_watchdog_active:
+                    warning(
+                        "Watchdog WiFi no activo. Reinstale el servicio host "
+                        "para prevenir caídas overnight."
+                    )
+            elif op == "11":
+                warning(
+                    "Puede reiniciar NetworkManager (eth/ZT se reconectan solos). "
+                    "La sesión SSH por ZeroTier/LAN suele recuperarse."
+                )
+                if confirm("¿Reparar WiFi ahora?", default=True):
+                    info("Aplicando recovery WiFi…")
+                    success(api.repair_wifi(force_nm_restart=True))
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -656,7 +698,7 @@ def menu_zwave_panel(api: HasControllerAPI) -> None:
 
 def menu_ha_configuration(api: HasControllerAPI) -> None:
     while True:
-        section("Actualizar Conectividad HTTP y Reverse Proxy")
+        section("Configuración HTTP, Proxy y Discovery")
         try:
             status = api.get_ha_configuration_status()
         except HasApiError as exc:
@@ -670,6 +712,13 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
             warning("Faltan trusted_proxies. Al entrar por Cloudflare, HA responderá 400.")
         if status.uses_storage_http and status.has_http_block:
             warning("Queda bloque http: en YAML; en HAS nuevas se ignora, conviene quitarlo.")
+        if status.discovery_enabled:
+            warning(
+                "Discovery activo: HAS escanea la red (zeroconf/ssdp/dhcp) "
+                "y puede llenar 'Discovered'."
+            )
+        else:
+            success("Discovery desactivado: no se escanean dispositivos nuevos en red.")
 
         menu_options(
             "Acciones",
@@ -678,6 +727,12 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                 ("2", "Eliminar bloque http legado (YAML)"),
                 ("3", "Aplicar trusted_proxies (.storage/http stable)"),
                 ("4", "Reiniciar Home Assistant"),
+                (
+                    "5",
+                    "Desactivar Discovery (escaneo de red)"
+                    if status.discovery_enabled
+                    else "Activar Discovery (escaneo de red)",
+                ),
                 ("0", "Volver"),
             ],
         )
@@ -713,6 +768,24 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                 if confirm("¿Reiniciar Home Assistant?", default=False):
                     info("Reiniciando HA…")
                     success(api.restart_ha())
+            elif op == "5":
+                if status.discovery_enabled:
+                    warning(
+                        "Se reemplazará default_config por componentes sin "
+                        "dhcp/ssdp/zeroconf/usb/bluetooth. "
+                        "Se creará backup .bak.horus.discovery y se reiniciará HA."
+                    )
+                    if confirm("¿Desactivar Discovery (escaneo de red)?", default=False):
+                        info("Desactivando Discovery y reiniciando HA…")
+                        success(api.set_ha_discovery(enabled=False, restart=True))
+                else:
+                    warning(
+                        "Se restaurará default_config (incluye escaneo de red). "
+                        "Se reiniciará HA."
+                    )
+                    if confirm("¿Activar Discovery de nuevo?", default=False):
+                        info("Activando Discovery y reiniciando HA…")
+                        success(api.set_ha_discovery(enabled=True, restart=True))
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -778,7 +851,7 @@ def menu_ha_admin(api: HasControllerAPI) -> None:
             [
                 ("1", "Usuarios (crear / resetear contraseña)"),
                 ("2", "Gestión de Espacios (backups, limpieza, disco)"),
-                ("3", "Configuración HTTP y Reverse Proxy (configuration.yaml)"),
+                ("3", "Configuración HTTP, Proxy y Discovery"),
                 ("4", "Gestor de Integraciones (energy, red, auxiliares, zwave)"),
                 ("", ""),
                 ("0", "Volver"),

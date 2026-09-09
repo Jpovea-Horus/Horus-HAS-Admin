@@ -7,7 +7,7 @@ import shlex
 from typing import Optional
 
 from exceptions import SSHCommandError, ValidationError
-from models import ConnectionProfile, NetworkDevice, NetworkStatus, WifiNetwork
+from models import ConnectionProfile, NetworkDevice, NetworkStatus, WifiDiagnoseStatus, WifiNetwork
 from ssh_client import SSHClient
 
 
@@ -161,6 +161,81 @@ class NetworkManager:
 
     def get_wifi_devices(self) -> list[NetworkDevice]:
         return [d for d in self.get_status().devices if d.device_type == "wifi"]
+
+    def diagnose_wifi(self) -> WifiDiagnoseStatus:
+        """Estado WiFi: radio, dispositivos y unavailable."""
+        status = WifiDiagnoseStatus()
+        radio = self._ssh.run("nmcli radio wifi 2>/dev/null")
+        status.radio = (radio.stdout or "").strip() or "unknown"
+        status.radio_enabled = "enabled" in status.radio.lower()
+
+        devices = self._ssh.run(
+            "nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status 2>/dev/null"
+        )
+        status.devices_raw = (devices.stdout or "").strip()
+        unavailable: list[str] = []
+        for line in status.devices_raw.splitlines():
+            parts = line.split(":")
+            if len(parts) < 3:
+                continue
+            if parts[1] == "wifi" and parts[2] in ("unavailable", "unmanaged"):
+                unavailable.append(parts[0])
+        status.unavailable = unavailable
+        wifi_lines = [
+            ln for ln in status.devices_raw.splitlines() if ":wifi:" in ln
+        ]
+        status.healthy = bool(wifi_lines) and not unavailable
+        if status.healthy:
+            status.detail = "WiFi operativo"
+        elif not wifi_lines:
+            status.detail = "Sin interfaz wifi en NetworkManager"
+        else:
+            status.detail = f"WiFi unavailable: {', '.join(unavailable)}"
+        return status
+
+    def repair_wifi(self, force_nm_restart: bool = True) -> str:
+        """Recupera wlan unavailable (mismo criterio que el watchdog del host)."""
+        before = self.diagnose_wifi()
+        steps: list[str] = []
+
+        self._ssh.run("nmcli radio wifi on", use_sudo=True)
+        steps.append("radio on")
+
+        wifi_devs = self.get_wifi_devices()
+        targets = [d.device for d in wifi_devs] or ["wlan0"]
+        for name in targets:
+            q = shlex.quote(name)
+            self._ssh.run(f"nmcli device set {q} managed yes", use_sudo=True)
+            self._ssh.run(f"ip link set {q} up || true", use_sudo=True)
+            steps.append(f"managed+up {name}")
+
+        mid = self.diagnose_wifi()
+        if mid.healthy:
+            return (
+                f"WiFi recuperado sin reiniciar NetworkManager. "
+                f"Antes: {before.detail}. Pasos: {', '.join(steps)}"
+            )
+
+        if not force_nm_restart:
+            raise SSHCommandError(
+                f"WiFi sigue mal ({mid.detail}). "
+                "Reinicie NetworkManager o use repair con force."
+            )
+
+        self._ssh.run_or_raise("systemctl restart NetworkManager", use_sudo=True)
+        steps.append("restart NetworkManager")
+        # Esperar a que NM reaparezca (eth puede reconectar).
+        self._ssh.run("sleep 4")
+        after = self.diagnose_wifi()
+        if after.healthy:
+            return (
+                f"WiFi recuperado tras reiniciar NetworkManager. "
+                f"Antes: {before.detail}. Pasos: {', '.join(steps)}"
+            )
+        raise SSHCommandError(
+            f"WiFi sigue unavailable tras recovery. "
+            f"Estado: {after.detail}. Dispositivos:\n{after.devices_raw}"
+        )
 
     def _get_mac_addresses(self) -> dict[str, str]:
         """Obtiene MAC por interfaz (`ip -br link`)."""

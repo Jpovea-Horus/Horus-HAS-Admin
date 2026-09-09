@@ -16,7 +16,9 @@ if TYPE_CHECKING:
 INSTALL_DIR = "/opt/admin_network"
 ENV_FILE = "/etc/admin_network.env"
 SERVICE_NAME = "admin_network"
+WATCHDOG_TIMER = "admin_network-wifi-watchdog.timer"
 STAGING_DIR = "/tmp/horus_admin_network_host"
+APT_RELAX_CONF = "/etc/apt/apt.conf.d/99horus-admin-network-apt"
 DEFAULT_PORT = 8765
 INSTALL_TIMEOUT = 600
 
@@ -32,6 +34,12 @@ class AdminNetworkHostManager:
         env_ok = self.ssh.run(f"test -f {shlex.quote(ENV_FILE)} && echo OK")
         active = self.ssh.run(f"systemctl is-active {shlex.quote(SERVICE_NAME)} 2>/dev/null")
         enabled = self.ssh.run(f"systemctl is-enabled {shlex.quote(SERVICE_NAME)} 2>/dev/null")
+        wd_active = self.ssh.run(
+            f"systemctl is-active {shlex.quote(WATCHDOG_TIMER)} 2>/dev/null"
+        )
+        wd_enabled = self.ssh.run(
+            f"systemctl is-enabled {shlex.quote(WATCHDOG_TIMER)} 2>/dev/null"
+        )
 
         port = DEFAULT_PORT
         api_key = ""
@@ -67,6 +75,8 @@ class AdminNetworkHostManager:
             health_detail=health_body[:200],
             api_key=api_key,
             port=port,
+            wifi_watchdog_active=wd_active.stdout.strip() == "active",
+            wifi_watchdog_enabled=wd_enabled.stdout.strip() == "enabled",
         )
 
     def read_api_key(self) -> str:
@@ -103,16 +113,17 @@ class AdminNetworkHostManager:
             "export DEBIAN_FRONTEND=noninteractive; "
             f"bash {shlex.quote(STAGING_DIR)}/install.sh"
         )
-        result = self.ssh.run(cmd, use_sudo=True, timeout=INSTALL_TIMEOUT)
+        self._enable_apt_relax()
+        try:
+            result = self.ssh.run(cmd, use_sudo=True, timeout=INSTALL_TIMEOUT)
+        finally:
+            self._disable_apt_relax()
         if not result.ok:
-            logs = self.ssh.run(
-                f"journalctl -u {shlex.quote(SERVICE_NAME)} -n 30 --no-pager 2>/dev/null || true"
+            raise SSHCommandError(
+                self._install_failure_detail(result),
+                exit_code=result.exit_code,
+                stderr=result.stderr,
             )
-            detail = result.stderr or result.stdout or "install.sh falló."
-            extra = logs.stdout.strip()
-            if extra:
-                detail = f"{detail}\n--- journalctl ---\n{extra[-1500:]}"
-            raise SSHCommandError(detail, exit_code=result.exit_code, stderr=result.stderr)
 
         self.ssh.run(f"rm -rf {shlex.quote(STAGING_DIR)}", use_sudo=True)
         status = self.get_status()
@@ -131,7 +142,51 @@ class AdminNetworkHostManager:
             f"HA: host 127.0.0.1  puerto {status.port}"
         )
 
+    def _enable_apt_relax(self) -> None:
+        """Ignora InRelease caducado en mirrors (USTC/bullseye-security)."""
+        conf = (
+            'Acquire::Check-Valid-Until "false";\n'
+            'Acquire::Check-Date "false";\n'
+        )
+        payload = f"printf %s {shlex.quote(conf)} > {shlex.quote(APT_RELAX_CONF)}"
+        self.ssh.run(f"bash -c {shlex.quote(payload)}", use_sudo=True)
+
+    def _disable_apt_relax(self) -> None:
+        self.ssh.run(f"rm -f {shlex.quote(APT_RELAX_CONF)}", use_sudo=True)
+
+    def _install_failure_detail(self, result) -> str:
+        detail = (result.stderr or result.stdout or "install.sh falló.").strip()
+        combined = f"{result.stdout or ''}\n{result.stderr or ''}"
+        if "InRelease is expired" in combined or "Release file" in combined:
+            detail += (
+                "\n\napt rechazó un mirror con InRelease caducado "
+                "(típico de mirrors.ustc.edu.cn/debian-security). "
+                "Reintente la instalación; si persiste, en el BND: "
+                "sudo apt-get -o Acquire::Check-Valid-Until=false update"
+            )
+            return detail
+        logs = self.ssh.run(
+            f"journalctl -u {shlex.quote(SERVICE_NAME)} -n 30 --no-pager 2>/dev/null || true"
+        )
+        extra = (logs.stdout or "").strip()
+        if extra and "No entries" not in extra:
+            detail = f"{detail}\n--- journalctl ---\n{extra[-1500:]}"
+        return detail
+
     def remove(self, wipe_env: bool = False) -> str:
+        self.ssh.run(
+            f"systemctl stop {shlex.quote(WATCHDOG_TIMER)} 2>/dev/null || true",
+            use_sudo=True,
+        )
+        self.ssh.run(
+            f"systemctl disable {shlex.quote(WATCHDOG_TIMER)} 2>/dev/null || true",
+            use_sudo=True,
+        )
+        self.ssh.run(
+            "rm -f /etc/systemd/system/admin_network-wifi-watchdog.service "
+            "/etc/systemd/system/admin_network-wifi-watchdog.timer",
+            use_sudo=True,
+        )
         self.ssh.run(f"systemctl stop {shlex.quote(SERVICE_NAME)} 2>/dev/null || true", use_sudo=True)
         self.ssh.run(
             f"systemctl disable {shlex.quote(SERVICE_NAME)} 2>/dev/null || true",
@@ -151,7 +206,7 @@ class AdminNetworkHostManager:
         if wipe_env:
             self.ssh.run(f"rm -f {shlex.quote(ENV_FILE)}", use_sudo=True)
             env_msg = f"{ENV_FILE} eliminado."
-        return f"Servicio host {SERVICE_NAME} eliminado. {env_msg}"
+        return f"Servicio host {SERVICE_NAME} eliminado (watchdog incluido). {env_msg}"
 
 
 def resolve_host_dir(local: Path) -> Path:

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from exceptions import SSHCommandError, ValidationError
 from models import BackupEntry, BackupManagerStatus, MaintenanceStatus
-from paths import REMOTE_BASE_PATH, REMOTE_CONFIG_DIR, REMOTE_ZWAVE_STORE
+from paths import REMOTE_BASE_PATH, REMOTE_CONFIG_DIR, REMOTE_ZWAVE_STORE, REMOTE_CUSTOM_COMPONENTS
 
 if TYPE_CHECKING:
     from ssh_client import SSHClient
@@ -55,6 +55,10 @@ class MaintenanceManager:
             status.ha_db_alert = status.ha_db_size_mb > 500
         except ValueError:
             status.ha_db_size_mb = 0.0
+
+        # 7. List custom_components
+        res = self.ssh.run(f"ls -1 {shlex.quote(REMOTE_CUSTOM_COMPONENTS)} 2>/dev/null")
+        status.custom_components = [l.strip() for l in res.stdout.splitlines() if l.strip()]
 
         return status
 
@@ -104,6 +108,23 @@ class MaintenanceManager:
                 count += 1
         
         return f"Se eliminaron {count} archivos antiguos."
+
+    def delete_custom_component(self, name: str) -> str:
+        """Borra una carpeta específica dentro de custom_components."""
+        name = name.strip()
+        if not name or "/" in name or ".." in name:
+            raise ValidationError(f"Nombre de componente inválido: {name}")
+
+        target = f"{REMOTE_CUSTOM_COMPONENTS}/{name}"
+        # Verificar que existe y es un directorio
+        check = self.ssh.run(f"test -d {shlex.quote(target)} && echo OK")
+        if check.stdout.strip() != "OK":
+            raise SSHCommandError(f"No se encontró el componente '{name}' en custom_components.")
+
+        res = self.ssh.run(f"rm -rf {shlex.quote(target)}", use_sudo=True)
+        if res.ok:
+            return f"Componente '{name}' eliminado de custom_components con éxito."
+        raise SSHCommandError(f"Error al eliminar componente '{name}': {res.stderr}")
 
 class BackupManager:
     """Lista, crea y elimina backups; informa espacio libre y prune Docker."""

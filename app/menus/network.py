@@ -118,6 +118,8 @@ def menu_wifi(api: HasControllerAPI) -> None:
                 ("2", "Conectar a red"),
                 ("3", "Desconectar"),
                 ("4", "Configurar IP (DHCP / estática)"),
+                ("5", "Diagnosticar WiFi"),
+                ("6", "Reparar WiFi (si scan vacío / unavailable)"),
                 ("0", "Volver al menú principal"),
             ],
         )
@@ -132,6 +134,11 @@ def menu_wifi(api: HasControllerAPI) -> None:
                     table_wifi(networks)
                 else:
                     warning("No se encontraron redes.")
+                    diag = api.diagnose_wifi()
+                    if not diag.healthy:
+                        warning(diag.detail)
+                        if confirm("¿Intentar reparar WiFi ahora?", default=True):
+                            success(api.repair_wifi(force_nm_restart=True))
             elif op == "2":
                 ssid = ask("SSID")
                 pwd = ask_password("Contraseña Wi-Fi")
@@ -158,6 +165,18 @@ def menu_wifi(api: HasControllerAPI) -> None:
                 success("Wi-Fi desconectado.")
             elif op == "4":
                 _menu_ip_profile(api, "wifi")
+            elif op == "5":
+                diag = api.diagnose_wifi()
+                if diag.healthy:
+                    success(f"{diag.detail} (radio={diag.radio})")
+                else:
+                    warning(f"{diag.detail} (radio={diag.radio})")
+                if diag.devices_raw:
+                    info(diag.devices_raw)
+            elif op == "6":
+                if confirm("¿Reparar WiFi (puede reiniciar NetworkManager)?", default=True):
+                    info("Reparando…")
+                    success(api.repair_wifi(force_nm_restart=True))
             else:
                 warning("Opción no válida.")
         except HasApiError as exc:
