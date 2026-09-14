@@ -317,9 +317,9 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
             "Acciones",
             [
                 ("1", "Actualizar verificación"),
-                ("2", "Eliminar plugin_service"),
-                ("3", "Subir / instalar desde carpeta local"),
-                ("4", "Instalar desde GitHub (horus-integration-nexxo)"),
+                ("2", "Subir / instalar desde carpeta local"),
+                ("3", "Instalar desde GitHub (horus-integration-nexxo)"),
+                ("4", "Eliminar plugin_service"),
                 ("5", "Reiniciar Home Assistant"),
                 ("0", "Volver"),
             ],
@@ -330,15 +330,7 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
         try:
             if op == "1":
                 continue
-            if op == "2":
-                if not status.plugin_exists:
-                    info("No hay nada que eliminar.")
-                    continue
-                warning(f"Se ejecutará: rm -rf {status.plugin_dir}")
-                if confirm("¿Eliminar plugin_service del controlador?", default=False):
-                    info("Eliminando…")
-                    success(api.remove_plugin_service())
-            elif op == "3":
+            elif op == "2":
                 if not status.parent_exists:
                     error("No se puede instalar: falta custom_components/.")
                     continue
@@ -360,7 +352,7 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
                 if confirm("¿Desea reiniciar Home Assistant ahora para aplicar cambios?", default=True):
                     info("Reiniciando HA…")
                     success(api.restart_ha())
-            elif op == "4":
+            elif op == "3":
                 if not status.parent_exists:
                     error("No se puede instalar: falta custom_components/.")
                     continue
@@ -386,6 +378,14 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
                 if confirm("¿Desea reiniciar Home Assistant ahora para aplicar cambios?", default=True):
                     info("Reiniciando HA…")
                     success(api.restart_ha())
+            elif op == "4":
+                if not status.plugin_exists:
+                    info("No hay nada que eliminar.")
+                    continue
+                warning(f"Se ejecutará: rm -rf {status.plugin_dir}")
+                if confirm("¿Eliminar plugin_service del controlador?", default=False):
+                    info("Eliminando…")
+                    success(api.remove_plugin_service())
             elif op == "5":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
                     info("Reiniciando HA…")
@@ -424,16 +424,16 @@ def menu_admin_network(api: HasControllerAPI) -> None:
             "Acciones",
             [
                 ("1", "Actualizar verificación"),
-                ("2", "Instalar todo (host + integración HA)"),
+                ("2", "Instalar TODO (host + integración HA)"),
                 ("3", "Instalar solo servicio host"),
                 ("4", "Instalar solo integración HA"),
                 ("5", "Mostrar API key"),
-                ("6", "Eliminar integración HA"),
-                ("7", "Eliminar servicio host"),
+                ("6", "Diagnosticar WiFi (wlan unavailable)"),
+                ("7", "Reparar WiFi ahora"),
                 ("8", "Eliminar TODO (integración + servicio host)"),
-                ("9", "Reiniciar Home Assistant"),
-                ("10", "Diagnosticar WiFi (wlan unavailable)"),
-                ("11", "Reparar WiFi ahora (reinicia NetworkManager si hace falta)"),
+                ("9", "Eliminar solo servicio host"),
+                ("10", "Eliminar solo integración HA"),
+                ("11", "Reiniciar Home Assistant"),
                 ("0", "Volver"),
             ],
         )
@@ -443,7 +443,7 @@ def menu_admin_network(api: HasControllerAPI) -> None:
         try:
             if op == "1":
                 continue
-            if op == "2":
+            elif op == "2":
                 local = ask_confirmed_path("admin_network", default_local)
                 if not local:
                     warning("Ruta vacía.")
@@ -488,18 +488,27 @@ def menu_admin_network(api: HasControllerAPI) -> None:
             elif op == "5":
                 success(f"API key: {api.get_admin_network_api_key()}")
             elif op == "6":
-                if not status.ha.component_exists:
-                    info("No hay integración HA que eliminar.")
-                    continue
-                if confirm("¿Eliminar custom_components/admin_network?", default=False):
-                    success(api.remove_admin_network_ha())
+                info("Diagnosticando WiFi…")
+                diag = api.diagnose_wifi()
+                if diag.healthy:
+                    success(f"{diag.detail} (radio={diag.radio})")
+                else:
+                    warning(f"{diag.detail} (radio={diag.radio})")
+                if diag.devices_raw:
+                    info(diag.devices_raw)
+                if not status.host.wifi_watchdog_active:
+                    warning(
+                        "Watchdog WiFi no activo. Reinstale el servicio host "
+                        "para prevenir caídas overnight."
+                    )
             elif op == "7":
-                if not status.host.dir_exists and not status.host.service_active:
-                    info("No hay servicio host que eliminar.")
-                    continue
-                wipe = confirm("¿Borrar también /etc/admin_network.env (API key)?", default=False)
-                if confirm("¿Eliminar servicio host admin_network?", default=False):
-                    success(api.remove_admin_network_host(wipe_env=wipe))
+                warning(
+                    "Puede reiniciar NetworkManager (eth/ZT se reconectan solos). "
+                    "La sesión SSH por ZeroTier/LAN suele recuperarse."
+                )
+                if confirm("¿Reparar WiFi ahora?", default=True):
+                    info("Aplicando recovery WiFi…")
+                    success(api.repair_wifi(force_nm_restart=True))
             elif op == "8":
                 if not status.ha.component_exists and not status.host.dir_exists:
                     info("No hay nada que eliminar.")
@@ -518,31 +527,22 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                     except Exception as e:
                         error(f"Error Host: {e}")
             elif op == "9":
+                if not status.host.dir_exists and not status.host.service_active:
+                    info("No hay servicio host que eliminar.")
+                    continue
+                wipe = confirm("¿Borrar también /etc/admin_network.env (API key)?", default=False)
+                if confirm("¿Eliminar servicio host admin_network?", default=False):
+                    success(api.remove_admin_network_host(wipe_env=wipe))
+            elif op == "10":
+                if not status.ha.component_exists:
+                    info("No hay integración HA que eliminar.")
+                    continue
+                if confirm("¿Eliminar custom_components/admin_network?", default=False):
+                    success(api.remove_admin_network_ha())
+            elif op == "11":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
                     info("Reiniciando HA…")
                     success(api.restart_ha())
-            elif op == "10":
-                info("Diagnosticando WiFi…")
-                diag = api.diagnose_wifi()
-                if diag.healthy:
-                    success(f"{diag.detail} (radio={diag.radio})")
-                else:
-                    warning(f"{diag.detail} (radio={diag.radio})")
-                if diag.devices_raw:
-                    info(diag.devices_raw)
-                if not status.host.wifi_watchdog_active:
-                    warning(
-                        "Watchdog WiFi no activo. Reinstale el servicio host "
-                        "para prevenir caídas overnight."
-                    )
-            elif op == "11":
-                warning(
-                    "Puede reiniciar NetworkManager (eth/ZT se reconectan solos). "
-                    "La sesión SSH por ZeroTier/LAN suele recuperarse."
-                )
-                if confirm("¿Reparar WiFi ahora?", default=True):
-                    info("Aplicando recovery WiFi…")
-                    success(api.repair_wifi(force_nm_restart=True))
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -825,6 +825,7 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                 ("2", "Admin Network (administrador de Redes)"),
                 ("3", "Helper Manager (administrador de Auxiliares)"),
                 ("4", "Z-Wave JS UI (panel lateral :8091)"),
+                ("5", "Reiniciar Home Assistant"),
                 ("", ""),
                 ("0", "Volver"),
             ],
@@ -840,6 +841,10 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
             menu_helper_manager(api)
         elif op == "4":
             menu_zwave_panel(api)
+        elif op == "5":
+            if confirm("¿Reiniciar Home Assistant?", default=False):
+                info("Reiniciando HA…")
+                success(api.restart_ha())
         else:
             warning("Opción no válida.")
 

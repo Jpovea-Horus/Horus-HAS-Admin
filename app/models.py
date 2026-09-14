@@ -314,6 +314,26 @@ class AdminNetworkInstallStatus:
 
 
 @dataclass
+class DebianRepairStatus:
+    """Diagnóstico APT/venv en BND Debian 11 (bullseye)."""
+
+    is_debian11: bool = False
+    os_id: str = ""
+    version_id: str = ""
+    version_codename: str = ""
+    arch: str = ""
+    python_version: str = ""
+    python39_version: str = ""
+    venv_works: bool = False
+    has_archive_mirror: bool = False
+    has_security_mirror: bool = False
+    sources_preview: str = ""
+    needs_repair: bool = False
+    detail: str = ""
+    error: str = ""
+
+
+@dataclass
 class ZwavePanelStatus:
     """Estado del panel lateral Z-Wave JS UI (www + panel_custom)."""
 

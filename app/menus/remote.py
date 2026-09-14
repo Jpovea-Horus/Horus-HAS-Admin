@@ -7,11 +7,13 @@ from exceptions import HasApiError
 from ui import (
     ask,
     confirm,
+    console,
     error,
     info,
     menu_options,
     panel_cellular,
     panel_cloudflare,
+    panel_debian_repair,
     panel_mqtt_diagnostic,
     panel_zerotier,
     section,
@@ -277,6 +279,102 @@ def menu_remote_connection(api: HasControllerAPI) -> None:
             warning("Opción no válida.")
 
 
+def menu_debian_apt_venv_repair(api: HasControllerAPI) -> None:
+    """Corrección paso a paso: APT mirrors + python3-venv (Debian 11)."""
+    from rich.panel import Panel
+
+    while True:
+        section("Corrección: APT + Python venv (Debian 11)")
+        try:
+            status = api.get_debian_repair_status()
+        except HasApiError as exc:
+            error(str(exc))
+            break
+
+        panel_debian_repair(status)
+        if status.needs_repair:
+            warning("Se recomienda ejecutar los pasos 1→6 en orden.")
+        elif status.venv_works:
+            success("venv OK: no hace falta reparar por este motivo.")
+
+        menu_options(
+            "Pasos de reparación",
+            [
+                ("1", "Paso 0: Diagnosticar (venv + OS + sources)"),
+                ("2", "Paso 1: Backup sources.list"),
+                ("3", "Paso 2: Archive mirrors (sin security)"),
+                ("4", "Paso 3: apt-get update (ignorar fechas)"),
+                ("5", "Paso 4: Instalar pip stack (MAIN)"),
+                ("6", "Paso 5: Instalar python3.9-venv (snapshot)"),
+                ("7", "Paso 6: Verificar venv final"),
+                ("8", "Ejecutar reparación completa (pasos 1→6)"),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "8":
+                if not status.is_debian11:
+                    error("No es Debian 11 / bullseye; abortado.")
+                    continue
+                if status.venv_works:
+                    info("venv ya funciona; no se ejecuta la reparación completa.")
+                    continue
+                warning(
+                    "Reescribe /etc/apt/sources.list (solo archive, sin security) "
+                    "e instala python3.9-venv desde snapshot.debian.org."
+                )
+                if not confirm("¿Ejecutar reparación completa?", default=False):
+                    continue
+                info("Ejecutando pasos 1→6 (puede tardar varios minutos)…")
+                result = api.run_debian_repair_full()
+                console.print(
+                    Panel(result, title="Logs reparación completa", border_style="green")
+                )
+                success("Reparación completa finalizada.")
+                continue
+
+            step_map = {
+                "1": 0,
+                "2": 1,
+                "3": 2,
+                "4": 3,
+                "5": 4,
+                "6": 5,
+                "7": 6,
+            }
+            if op not in step_map:
+                warning("Opción no válida.")
+                continue
+
+            step = step_map[op]
+            if step >= 1:
+                labels = {
+                    1: "¿Hacer backup de sources.list?",
+                    2: "¿Reescribir sources.list a archive.debian.org?",
+                    3: "¿Ejecutar apt-get update?",
+                    4: "¿Instalar python3-pip / setuptools / wheel?",
+                    5: "¿Descargar e instalar python3.9-venv (.deb snapshot)?",
+                    6: "¿Verificar python3 -m venv?",
+                }
+                # Pasos destructivos (2–5) piden confirmación explícita
+                default_ok = step in (1, 6)
+                if not confirm(labels[step], default=default_ok):
+                    continue
+
+            info(f"Ejecutando paso {step}…")
+            result = api.run_debian_repair_step(step)
+            console.print(
+                Panel(result, title=f"Logs paso {step}", border_style="cyan")
+            )
+            if step == 6 and "VENV_OK" in result:
+                success("venv reparado. Puede reinstalar Admin Network (host).")
+        except HasApiError as exc:
+            error(str(exc))
+
+
 def menu_error_correction(api: HasControllerAPI) -> None:
     while True:
         section("Modo Corrección de errores")
@@ -285,6 +383,7 @@ def menu_error_correction(api: HasControllerAPI) -> None:
             [
                 ("1", "Service cellular"),
                 ("2", "Conexión MQTT (Z-Wave JS UI)"),
+                ("3", "APT + Python venv (Debian 11 / BND)"),
                 ("0", "Volver al menú principal"),
             ],
         )
@@ -295,5 +394,7 @@ def menu_error_correction(api: HasControllerAPI) -> None:
             menu_cellular(api)
         elif op == "2":
             menu_mqtt(api)
+        elif op == "3":
+            menu_debian_apt_venv_repair(api)
         else:
             warning("Opción no válida.")

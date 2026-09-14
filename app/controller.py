@@ -25,6 +25,7 @@ from mqtt_manager import MqttManager
 from plugin_service_manager import PluginServiceManager
 from ha_integration_manager import HaIntegrationManager
 from admin_network_host_manager import AdminNetworkHostManager
+from debian_repair_manager import DebianRepairManager
 from zwave_panel_manager import ZwavePanelManager
 from models import (
     BackupEntry,
@@ -41,6 +42,7 @@ from models import (
     PluginServiceStatus,
     SessionInfo,
     AdminNetworkInstallStatus,
+    DebianRepairStatus,
     HaIntegrationStatus,
     WifiDiagnoseStatus,
     ZwavePanelStatus,
@@ -68,6 +70,7 @@ class HasControllerAPI:
         self.helper_manager = HaIntegrationManager(self.ssh, "helper_manager")
         self.zwave_panel = ZwavePanelManager(self.ssh)
         self.admin_network_host = AdminNetworkHostManager(self.ssh)
+        self.debian_repair = DebianRepairManager(self.ssh)
         self.ha_config = HaConfigManager(self.ssh)
         self.cloudflare = CloudflareManager(self.ssh)
         self.backups = BackupManager(self.ssh)
@@ -197,6 +200,15 @@ class HasControllerAPI:
 
     def repair_wifi(self, force_nm_restart: bool = True) -> str:
         return self.network.repair_wifi(force_nm_restart=force_nm_restart)
+
+    def get_debian_repair_status(self) -> DebianRepairStatus:
+        return self.debian_repair.get_status()
+
+    def run_debian_repair_step(self, step: int) -> str:
+        return self.debian_repair.run_step(step)
+
+    def run_debian_repair_full(self) -> str:
+        return self.debian_repair.run_full_repair()
 
     def get_helper_manager_status(self) -> HaIntegrationStatus:
         return self.helper_manager.get_status()

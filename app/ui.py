@@ -23,6 +23,7 @@ from rich.live import Live
 from models import (
     BackupManagerStatus,
     CellularStatus,
+    DebianRepairStatus,
     HaConfigurationStatus,
     HaIntegrationStatus,
     HaUser,
@@ -985,6 +986,69 @@ def panel_ha_configuration(status: HaConfigurationStatus) -> None:
         body.append(f"\n{status.error}\n", style="bold red")
 
     console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+
+def panel_debian_repair(status: DebianRepairStatus) -> None:
+    """Diagnóstico APT/venv Debian 11 para modo corrección de errores."""
+    if status.error:
+        border = "red"
+    elif status.needs_repair:
+        border = "yellow"
+    elif status.venv_works and status.is_debian11:
+        border = "green"
+    else:
+        border = "cyan"
+
+    body = Text()
+    body.append("DEBIAN 11 — APT + PYTHON VENV\n", style="bold underline")
+    body.append("--------------------------------\n")
+
+    body.append("Sistema: ", style="info")
+    os_txt = (
+        f"{status.os_id or '?'} {status.version_id or '?'} "
+        f"({status.version_codename or '?'})"
+    )
+    body.append(
+        f"{os_txt}\n",
+        style="success" if status.is_debian11 else "bold yellow",
+    )
+    body.append(f"Arquitectura: {status.arch or '-'}\n", style="dim")
+    body.append(f"Python: {status.python_version or '-'}\n", style="dim")
+    if status.python39_version:
+        body.append(f"python3.9 pkg: {status.python39_version}\n", style="dim")
+
+    body.append("python3 -m venv: ", style="info")
+    body.append(
+        "OK\n" if status.venv_works else "FALLA\n",
+        style="success" if status.venv_works else "bold red",
+    )
+    body.append("archive.debian.org: ", style="info")
+    body.append(
+        "sí\n" if status.has_archive_mirror else "no\n",
+        style="success" if status.has_archive_mirror else "dim",
+    )
+    body.append("mirror security en sources: ", style="info")
+    body.append(
+        "SÍ (quitar si update da 404)\n" if status.has_security_mirror else "no\n",
+        style="bold yellow" if status.has_security_mirror else "success",
+    )
+
+    if status.detail:
+        body.append(f"\n{status.detail}\n", style="warning" if status.needs_repair else "dim")
+    if status.error:
+        body.append(f"\n{status.error}\n", style="bold red")
+
+    console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+    if status.sources_preview:
+        console.print(
+            Panel(
+                status.sources_preview,
+                title="[subtitle]/etc/apt/sources.list[/subtitle]",
+                border_style="dim",
+                box=box.ROUNDED,
+            )
+        )
 
 
 def panel_system_health(status: SystemHealthStatus) -> None:
