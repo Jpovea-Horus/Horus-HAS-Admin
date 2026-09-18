@@ -7,6 +7,7 @@ dist/
 # Sesión local (no secretos de cuenta, sí huellas SSH)
 session_hosts.json
 ssh_known_hosts
+app_settings.json
 
 # Restos de edición
 *_temp_*.py

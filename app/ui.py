@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.rule import Rule
+from rich.syntax import Syntax
 from rich.table import Table
 from rich.theme import Theme
 from rich.text import Text
@@ -37,6 +38,7 @@ from models import (
     NetworkDevice,
     ConnectionProfile,
     CloudflareStatus,
+    SelfHealStatus,
     ZwavePanelStatus,
 )
 from paths import APP_NAME, APP_VERSION
@@ -615,6 +617,87 @@ _ACTION_LABELS = {
 }
 
 
+_SELF_HEAL_LABELS = {
+    "none": ("OK", "green", "Sin reparación necesaria"),
+    "fix_zwave_url": ("S0", "yellow", "Corregir URL Z-Wave"),
+    "restart_zwave": ("S1", "yellow", "Reiniciar servicio Z-Wave"),
+    "repair_discovery_keys": ("S2", "bright_yellow", "Reparar discovery_keys"),
+    "clean_db_wal": ("S3", "bright_yellow", "Limpiar shm/wal de DB"),
+    "restart_ha": ("S4", "red", "Reiniciar Home Assistant"),
+    "escalate_ha_then_schema": ("S4", "red", "Reiniciar HA y escalar a schema"),
+    "review_manual": ("REVISAR", "dim", "Revisión manual requerida"),
+}
+
+
+def panel_self_heal(status: SelfHealStatus) -> None:
+    """Panel de diagnóstico HA / Z-Wave self-heal."""
+    label, border, title = _SELF_HEAL_LABELS.get(
+        status.recommended_action, ("?", "dim", "Estado desconocido")
+    )
+    if status.error:
+        border = "red"
+
+    body = Text()
+    body.append("HA / Z-WAVE — SELF-HEAL\n", style="bold underline")
+    body.append("-----------------------\n")
+
+    body.append(f"Contenedor: {status.ha_container or '(no detectado)'}\n", style="dim")
+    body.append("HA running: ", style="info")
+    body.append(
+        "SÍ\n" if status.ha_running else "NO\n",
+        style="success" if status.ha_running else "warning",
+    )
+    body.append(":8123: ", style="info")
+    body.append(
+        "OK\n" if status.ha_port_8123_ok else "FAIL\n",
+        style="success" if status.ha_port_8123_ok else "bold red",
+    )
+    if status.ha_cpu_percent >= 0:
+        cpu_style = "bold red" if status.ha_cpu_high else "dim"
+        body.append(f"CPU HA: {status.ha_cpu_percent:.1f}%\n", style=cpu_style)
+    if status.disk_free_pct >= 0:
+        disk_style = "bold red" if status.disk_low else "dim"
+        body.append(f"Disco libre: {status.disk_free_pct:.0f}%\n", style=disk_style)
+
+    body.append(
+        f"Logs — discovery_keys:{'✗' if status.log_discovery_keys_error else '✓'}  "
+        f"db:{'✗' if status.log_db_corrupt else '✓'}  "
+        f"zwave_ws:{'✗' if status.log_zwave_ws_error else '✓'}\n",
+        style="dim",
+    )
+
+    body.append(f"Servicio: {status.zwave_service_name or '-'}\n", style="dim")
+    body.append("Z-Wave service: ", style="info")
+    body.append(
+        "activo\n" if status.zwave_service_active else "inactivo\n",
+        style="success" if status.zwave_service_active else "warning",
+    )
+    body.append(
+        f"Puerto 3000: {'✓' if status.port_3000_open else '✗'}  "
+        f"proceso:{'✓' if status.zwave_process_running else '✗'}\n",
+        style="dim",
+    )
+    body.append(
+        f"HA Z-Wave URL: {status.ha_zwave_ws_url or '(no detectada)'}"
+        f"{' ✓' if status.zwave_ws_url_ok else ''}\n",
+        style="success" if status.zwave_ws_url_ok else "dim",
+    )
+
+    body.append(f"\n[{label}/{status.severity}] ", style=f"bold {border}")
+    body.append(f"{title}\n", style=border)
+    if status.action_detail:
+        body.append(f"{status.action_detail}\n", style="dim")
+    if status.error:
+        body.append(f"Error: {status.error}\n", style="bold red")
+
+    if status.log_sample:
+        body.append("\nTrazas relevantes:\n", style="info")
+        for line in status.log_sample:
+            body.append(f"  {line}\n", style="dim")
+
+    console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+
 def panel_mqtt_diagnostic(status: MqttDiagnosticStatus) -> None:
     """Panel de diagnóstico MQTT Z-Wave JS UI."""
     label, border, title = _ACTION_LABELS.get(
@@ -719,6 +802,13 @@ def panel_plugin_service(status: PluginServiceStatus) -> None:
             style="success" if ok_domain else "warning",
         )
 
+    body.append("AWS credentials (/config): ", style="info")
+    body.append(
+        "PRESENTE\n" if status.aws_credentials_exists else "AUSENTE\n",
+        style="success" if status.aws_credentials_exists else "bold yellow",
+    )
+    body.append(f"  → {status.aws_credentials_path}\n", style="dim")
+
     if status.error:
         body.append(f"\n{status.error}\n", style="bold red")
 
@@ -796,8 +886,22 @@ def panel_admin_network(status: AdminNetworkInstallStatus) -> None:
         style="success" if host.env_exists else "bold yellow",
     )
     if host.api_key:
+        from local_config import mask_secret
+
         body.append("API key: ", style="info")
-        body.append(f"{host.api_key}\n", style="success")
+        body.append(f"{mask_secret(host.api_key)}\n", style="success")
+        body.append(
+            "  (completa: menú opción «Mostrar API key»)\n",
+            style="dim",
+        )
+
+    body.append("Config entry HA: ", style="info")
+    if status.ha_entry_configured:
+        body.append("OK (auto)\n", style="success")
+        if status.ha_entry_detail:
+            body.append(f"  {status.ha_entry_detail}\n", style="dim")
+    else:
+        body.append(f"{status.ha_entry_detail or 'pendiente'}\n", style="bold yellow")
 
     body.append("WiFi watchdog: ", style="info")
     if host.wifi_watchdog_active:
@@ -825,10 +929,11 @@ def panel_admin_network(status: AdminNetworkInstallStatus) -> None:
         body.append(f"versión: {ha.manifest_version}\n", style="dim")
 
     body.append(
-        "\nTras instalar: Ajustes > Dispositivos y Servicios > Añadir > Admin Network\n",
+        "\nTras instalar: la API key se inyecta en HA automáticamente "
+        "(host 127.0.0.1 / puerto 8765).\n"
+        "Si falta la entry, use «Configurar integración en HA» o añádala en la UI.\n",
         style="dim",
     )
-    body.append("Host 127.0.0.1  Puerto 8765  API key la de arriba.\n", style="dim")
 
     if ha.error:
         body.append(f"\nHA: {ha.error}\n", style="bold red")
@@ -982,10 +1087,56 @@ def panel_ha_configuration(status: HaConfigurationStatus) -> None:
     if status.discovery_detail:
         body.append(f"  {status.discovery_detail}\n", style="dim")
 
+    body.append("\nIncludes YAML: ", style="info")
+    body.append(
+        "OK\n" if status.yaml_includes_ok else "INCOMPLETO\n",
+        style="success" if status.yaml_includes_ok else "bold yellow",
+    )
+    _flag("automation: !include", status.has_automation_include)
+    _flag("script: !include", status.has_script_include)
+    _flag("scene: !include", status.has_scene_include)
+    _flag("automations.yaml", status.automations_file_exists, "NO EXISTE")
+    _flag("scripts.yaml", status.scripts_file_exists, "NO EXISTE")
+    _flag("scenes.yaml", status.scenes_file_exists, "NO EXISTE")
+    for issue in status.yaml_issues[:6]:
+        body.append(f"  • {issue}\n", style="bold yellow")
+
     if status.error:
         body.append(f"\n{status.error}\n", style="bold red")
 
+    # Borde rojo/amarillo si faltan includes (causa típica del timeout de automatizaciones)
+    if not status.yaml_includes_ok and border == "green":
+        border = "yellow"
+
     console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+
+def panel_yaml_content(content: str, path: str, max_lines: int = 400) -> None:
+    """Muestra un YAML remoto con resaltado (truncado si es muy largo)."""
+    lines = (content or "").splitlines()
+    truncated = False
+    if len(lines) > max_lines:
+        shown = "\n".join(lines[:max_lines])
+        truncated = True
+    else:
+        shown = content or "(vacío)"
+
+    syntax = Syntax(
+        shown if shown.endswith("\n") or not shown else shown + "\n",
+        "yaml",
+        theme="monokai",
+        line_numbers=True,
+        word_wrap=False,
+    )
+    title = f"YAML — {path}"
+    if truncated:
+        title += f" (primeras {max_lines} líneas de {len(lines)})"
+    console.print(Panel(syntax, title=title, border_style="cyan", box=box.ROUNDED))
+    if truncated:
+        info(
+            f"Archivo truncado en pantalla ({len(lines)} líneas totales). "
+            "Revise el resto por SSH si hace falta."
+        )
 
 
 def panel_debian_repair(status: DebianRepairStatus) -> None:

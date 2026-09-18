@@ -134,6 +134,10 @@ class AdminNetworkHostManager:
             )
 
         key_txt = status.api_key or "(no leída)"
+        if status.api_key:
+            from local_config import mask_secret
+
+            key_txt = mask_secret(status.api_key)
         health = "OK" if status.health_ok else (status.health_detail or "sin respuesta")
         return (
             f"Servicio host instalado ({count} archivo(s) subidos). "

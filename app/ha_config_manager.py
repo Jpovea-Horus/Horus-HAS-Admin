@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from exceptions import SSHCommandError
@@ -92,6 +93,31 @@ LEGACY_HTTP_YAML = """http:
 _YAML_PROXY_V4 = re.compile(r"(?m)^\s*-\s*127\.0\.0\.1(?:/32)?\s*$")
 _YAML_PROXY_V6 = re.compile(r"(?m)^\s*-\s*::1(?:/128)?\s*$")
 
+_AUTOMATION_INCLUDE_RE = re.compile(
+    r"(?m)^automation:\s*!include\s+automations\.yaml\s*(?:#.*)?$"
+)
+_SCRIPT_INCLUDE_RE = re.compile(
+    r"(?m)^script:\s*!include\s+scripts\.yaml\s*(?:#.*)?$"
+)
+_SCENE_INCLUDE_RE = re.compile(
+    r"(?m)^scene:\s*!include\s+scenes\.yaml\s*(?:#.*)?$"
+)
+
+_INCLUDE_BLOCK = (
+    "automation: !include automations.yaml\n"
+    "script: !include scripts.yaml\n"
+    "scene: !include scenes.yaml\n"
+)
+
+_YAML_DELETE_TARGETS = frozenset(
+    {
+        "automations.yaml",
+        "scripts.yaml",
+        "scenes.yaml",
+        "configuration.yaml",
+    }
+)
+
 
 class HaConfigManager:
     """HTTP de HA: limpia YAML legado y deja trusted_proxies en .storage (stable)."""
@@ -135,11 +161,13 @@ class HaConfigManager:
             )
             status.http_ok = not status.has_http_block
             self._fill_discovery_status(status, content)
+            self._fill_includes_status(status, content, config_dir)
         else:
             status.is_empty = True
             status.http_ok = True
             status.discovery_enabled = True
             status.discovery_detail = "Sin configuration.yaml (se asumirá default_config al crear)."
+            self._fill_includes_status(status, "", config_dir)
 
         self._fill_storage_status(status)
         parsed = self._parse_ha_version(version)
@@ -236,6 +264,639 @@ class HaConfigManager:
             return f"Contenedor '{container}' reiniciado correctamente."
         raise SSHCommandError(f"Error al reiniciar '{container}': {res.stderr}")
 
+    def get_full_configuration_yaml(self) -> tuple[str, str]:
+        """Lee configuration.yaml completo. Devuelve (path, content)."""
+        status = self.get_status()
+        path = status.path or CONFIG_YAML_PATH
+        if not status.exists:
+            raise SSHCommandError(f"No existe configuration.yaml en {path}.")
+        res = self.ssh.run(f"cat {shlex.quote(path)} 2>/dev/null")
+        if not res.ok:
+            detail = (res.stderr or res.stdout or "sin respuesta").strip()
+            raise SSHCommandError(f"No se pudo leer {path}: {detail}")
+        return path, res.stdout
+
+    def get_automations_yaml(self) -> tuple[str, str]:
+        """Lee automations.yaml completo. Devuelve (path, content)."""
+        config_dir = self._detect_config_dir()
+        if not config_dir:
+            raise SSHCommandError("No se detectó la ruta de config de Home Assistant.")
+        path = f"{config_dir}/automations.yaml"
+        exists = (
+            self.ssh.run(f"test -f {shlex.quote(path)} && echo OK").stdout.strip()
+            == "OK"
+        )
+        if not exists:
+            raise SSHCommandError(f"No existe automations.yaml en {path}.")
+        res = self.ssh.run(f"cat {shlex.quote(path)} 2>/dev/null")
+        if not res.ok:
+            detail = (res.stderr or res.stdout or "sin respuesta").strip()
+            raise SSHCommandError(f"No se pudo leer {path}: {detail}")
+        return path, res.stdout
+
+    def check_ha_config(self) -> str:
+        """Valida YAML con hass --script check_config (útil tras timeout de automatizaciones)."""
+        container = self._detect_container()
+        if not container:
+            raise SSHCommandError(
+                "No se detectó el contenedor de Home Assistant en ejecución."
+            )
+
+        res = self.ssh.run(
+            f"docker exec {shlex.quote(container)} "
+            "hass --script check_config -c /config",
+            timeout=180,
+        )
+        out = (res.stdout or "").strip()
+        err = (res.stderr or "").strip()
+        combined = "\n".join(p for p in (out, err) if p)
+
+        fatal = bool(
+            re.search(
+                r"Fatal error|ERROR|failed to|Invalid config|Integration error",
+                combined,
+                re.IGNORECASE,
+            )
+        )
+        if res.ok and not fatal:
+            return (
+                "Configuración válida (check_config OK). "
+                "Si la automatización no aparece, reinicie HA o recargue automatizaciones."
+            )
+        if not combined:
+            raise SSHCommandError(
+                "check_config no devolvió salida. "
+                f"exit_code={res.exit_code}."
+            )
+        return f"Errores detectados en la configuración:\n{combined}"
+
+    def ensure_yaml_includes(self, restart: bool = False) -> str:
+        """Asegura automation/script/scene includes y crea archivos vacíos si faltan."""
+        status = self.get_status()
+        path = status.path or CONFIG_YAML_PATH
+        config_dir = status.config_dir or self._detect_config_dir()
+        if not config_dir:
+            raise SSHCommandError("No se detectó la ruta de config de Home Assistant.")
+
+        msgs: list[str] = []
+        changed = False
+
+        if not status.exists or status.is_empty:
+            content = DEFAULT_CONFIGURATION_YAML
+            self._backup_remote(path, ".bak.horus.includes")
+            self._write_remote_file(path, content)
+            msgs.append(f"Escrita plantilla base en {path}.")
+            changed = True
+
+        raw = self.ssh.run(f"cat {shlex.quote(path)}").stdout
+        new_content, include_msgs = self._patch_include_lines(raw)
+        if include_msgs:
+            msgs.extend(include_msgs)
+        if new_content != raw:
+            self._backup_remote(path, ".bak.horus.includes")
+            self._write_remote_file(path, new_content)
+            changed = True
+
+        for name, default_body in (
+            ("automations.yaml", "[]\n"),
+            ("scripts.yaml", "{}\n"),
+            ("scenes.yaml", "[]\n"),
+        ):
+            file_path = f"{config_dir}/{name}"
+            exists = (
+                self.ssh.run(
+                    f"test -f {shlex.quote(file_path)} && echo OK"
+                ).stdout.strip()
+                == "OK"
+            )
+            if not exists:
+                self._write_remote_file(file_path, default_body)
+                msgs.append(f"Creado {file_path} vacío.")
+                changed = True
+
+        if not changed and not msgs:
+            msg = "Includes automation/script/scene ya estaban OK."
+        else:
+            msg = " ".join(msgs) if msgs else "Includes reparados."
+
+        verify = self.get_status()
+        if not verify.yaml_includes_ok:
+            raise SSHCommandError(
+                f"{msg} Pero la verificación sigue fallando: "
+                f"{'; '.join(verify.yaml_issues) or 'includes incompletos'}."
+            )
+
+        if restart and changed:
+            msg = f"{msg} {self.restart_ha()}"
+        return msg
+
+    def delete_ha_yaml_file(self, filename: str, recreate_config: bool = False) -> str:
+        """Elimina un YAML de /config tras backup. Solo nombres permitidos."""
+        name = (filename or "").strip()
+        if name not in _YAML_DELETE_TARGETS:
+            raise SSHCommandError(
+                f"Archivo no permitido: {name}. "
+                f"Permitidos: {', '.join(sorted(_YAML_DELETE_TARGETS))}."
+            )
+        config_dir = self._detect_config_dir()
+        if not config_dir:
+            raise SSHCommandError("No se detectó la ruta de config de Home Assistant.")
+        path = f"{config_dir}/{name}"
+        exists = (
+            self.ssh.run(f"test -f {shlex.quote(path)} && echo OK").stdout.strip()
+            == "OK"
+        )
+        if not exists:
+            return f"No existe {path}; nada que eliminar."
+
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        backup = f"{path}.bak.horus.delete.{stamp}"
+        backup_res = self.ssh.run(
+            f"cp {shlex.quote(path)} {shlex.quote(backup)} 2>/dev/null; echo OK",
+            use_sudo=True,
+        )
+        if backup_res.stdout.strip() != "OK" and not backup_res.ok:
+            raise SSHCommandError(f"No se pudo crear backup de {path}.")
+
+        rm = self.ssh.run(f"rm -f {shlex.quote(path)}", use_sudo=True)
+        if not rm.ok:
+            raise SSHCommandError(
+                f"No se pudo eliminar {path}: {rm.stderr or rm.stdout}",
+                exit_code=rm.exit_code,
+                stderr=rm.stderr,
+            )
+
+        msg = f"Eliminado {path}. Backup: {backup}."
+        if name == "configuration.yaml" and recreate_config:
+            self._write_remote_file(path, DEFAULT_CONFIGURATION_YAML)
+            for fname, body in (
+                ("automations.yaml", "[]\n"),
+                ("scripts.yaml", "{}\n"),
+                ("scenes.yaml", "[]\n"),
+            ):
+                fpath = f"{config_dir}/{fname}"
+                if (
+                    self.ssh.run(
+                        f"test -f {shlex.quote(fpath)} && echo OK"
+                    ).stdout.strip()
+                    != "OK"
+                ):
+                    self._write_remote_file(fpath, body)
+            msg += " Se escribió plantilla base de configuration.yaml + includes."
+        return msg
+
+    def get_admin_network_entry_status(
+        self, host: str = "127.0.0.1", port: int = 8765
+    ) -> tuple[bool, str]:
+        """Devuelve (configurado, detalle) de la entry admin_network en HA."""
+        path = f"{self._detect_config_dir()}/.storage/core.config_entries"
+        script = f"""
+import json
+path = {json.dumps(path)}
+want_host = {json.dumps(host)}
+want_port = int({port})
+try:
+    with open(path) as fh:
+        doc = json.load(fh)
+except Exception as exc:
+    print("MISSING")
+    print(str(exc))
+    raise SystemExit(0)
+entries = (doc.get("data") or {{}}).get("entries") or []
+found = None
+for entry in entries:
+    if entry.get("domain") != "admin_network":
+        continue
+    data = entry.get("data") or {{}}
+    if str(data.get("host", "")).strip() == want_host and int(data.get("port") or 0) == want_port:
+        found = entry
+        break
+if not found:
+    for entry in entries:
+        if entry.get("domain") == "admin_network":
+            found = entry
+            break
+if not found:
+    print("ABSENT")
+    raise SystemExit(0)
+data = found.get("data") or {{}}
+key = str(data.get("api_key") or "")
+masked = (key[:4] + "…" + key[-4:]) if len(key) > 8 else ("*" * len(key) if key else "(vacía)")
+print("OK")
+print(f"{{found.get('title') or 'Admin Network'}} host={{data.get('host')}} port={{data.get('port')}} key={{masked}}")
+"""
+        res = self.ssh.run(f"python3 -c {shlex.quote(script)}", use_sudo=True)
+        lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
+        if not lines:
+            return False, "No se pudo leer core.config_entries"
+        if lines[0] == "OK":
+            return True, lines[1] if len(lines) > 1 else "configurada"
+        if lines[0] == "ABSENT":
+            return False, "sin config entry"
+        return False, lines[1] if len(lines) > 1 else lines[0]
+
+    def ensure_admin_network_entry(
+        self,
+        api_key: str,
+        host: str = "127.0.0.1",
+        port: int = 8765,
+        force: bool = False,
+    ) -> str:
+        """Crea o actualiza la config entry de admin_network en .storage."""
+        api_key = (api_key or "").strip()
+        if not api_key:
+            raise SSHCommandError(
+                "API key vacía: no se puede configurar la integración en HA."
+            )
+        path = f"{self._detect_config_dir()}/.storage/core.config_entries"
+        if not path.startswith("/"):
+            raise SSHCommandError("No se detectó la ruta de config de Home Assistant.")
+
+        payload = json.dumps(
+            {
+                "path": path,
+                "force": bool(force),
+                "host": host,
+                "port": int(port),
+                "api_key": api_key,
+                "title": f"Admin Network ({host})",
+            }
+        )
+        script = f"""
+import json, os, uuid
+from datetime import datetime, timezone
+req = json.loads({json.dumps(payload)})
+path = req["path"]
+force = bool(req["force"])
+host = req["host"]
+port = int(req["port"])
+api_key = req["api_key"]
+title = req["title"]
+
+def now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+
+def normalize_entry(entry):
+    # HA storage >= 1.4/1.5 exige discovery_keys (si falta → KeyError)
+    if not isinstance(entry, dict):
+        return False
+    changed = False
+    if "discovery_keys" not in entry or entry.get("discovery_keys") is None:
+        entry["discovery_keys"] = {{}}
+        changed = True
+    elif not isinstance(entry.get("discovery_keys"), dict):
+        entry["discovery_keys"] = {{}}
+        changed = True
+    if "subentries" not in entry or entry.get("subentries") is None:
+        entry["subentries"] = []
+        changed = True
+    entry.setdefault("options", {{}})
+    entry.setdefault("pref_disable_new_entities", False)
+    entry.setdefault("pref_disable_polling", False)
+    entry.setdefault("unique_id", None)
+    entry.setdefault("disabled_by", None)
+    entry.setdefault("minor_version", 1)
+    if "created_at" not in entry:
+        entry["created_at"] = now()
+        changed = True
+    if "modified_at" not in entry:
+        entry["modified_at"] = now()
+        changed = True
+    return changed
+
+os.makedirs(os.path.dirname(path), exist_ok=True)
+doc = None
+if os.path.isfile(path):
+    with open(path) as fh:
+        doc = json.load(fh)
+if not isinstance(doc, dict):
+    doc = {{"version": 1, "minor_version": 5, "key": "core.config_entries", "data": {{"entries": []}}}}
+doc.setdefault("version", 1)
+# minor >= 5: HA ya no migra discovery_keys; hay que escribirlos nosotros
+doc["minor_version"] = max(int(doc.get("minor_version") or 1), 5)
+doc["key"] = "core.config_entries"
+data = doc.get("data")
+if not isinstance(data, dict):
+    data = {{}}
+entries = data.get("entries")
+if not isinstance(entries, list):
+    entries = []
+
+repaired = 0
+for entry in entries:
+    if normalize_entry(entry):
+        repaired += 1
+
+match = None
+for entry in entries:
+    if entry.get("domain") != "admin_network":
+        continue
+    edata = entry.get("data") or {{}}
+    if str(edata.get("host", "")).strip() == host and int(edata.get("port") or 0) == port:
+        match = entry
+        break
+if match is None:
+    for entry in entries:
+        if entry.get("domain") == "admin_network":
+            match = entry
+            break
+
+if match is not None:
+    edata = match.get("data") if isinstance(match.get("data"), dict) else {{}}
+    same = (
+        str(edata.get("host", "")).strip() == host
+        and int(edata.get("port") or 0) == port
+        and str(edata.get("api_key") or "") == api_key
+        and "discovery_keys" in match
+        and match.get("subentries") is not None
+    )
+    if same and not force and repaired == 0:
+        print("OK")
+        print("UNCHANGED")
+        print(match.get("entry_id", ""))
+        raise SystemExit(0)
+    match["title"] = title
+    match["data"] = {{"host": host, "port": port, "api_key": api_key}}
+    match["version"] = int(match.get("version") or 1)
+    match["modified_at"] = now()
+    normalize_entry(match)
+    match.setdefault("source", "user")
+    action = "UPDATED"
+    entry_id = match.get("entry_id", "")
+else:
+    entry_id = uuid.uuid4().hex
+    new_entry = {{
+        "entry_id": entry_id,
+        "version": 1,
+        "minor_version": 1,
+        "domain": "admin_network",
+        "title": title,
+        "data": {{"host": host, "port": port, "api_key": api_key}},
+        "options": {{}},
+        "pref_disable_new_entities": False,
+        "pref_disable_polling": False,
+        "source": "user",
+        "unique_id": None,
+        "disabled_by": None,
+        "created_at": now(),
+        "modified_at": now(),
+        "discovery_keys": {{}},
+        "subentries": [],
+    }}
+    entries.append(new_entry)
+    action = "CREATED"
+
+data["entries"] = entries
+doc["data"] = data
+tmp = path + ".tmp_horus_admin_network"
+with open(tmp, "w") as fh:
+    json.dump(doc, fh, indent=2)
+    fh.write("\\n")
+os.replace(tmp, path)
+print("OK")
+print(action)
+print(entry_id)
+print(path)
+print(str(repaired))
+"""
+        container = self._detect_container()
+        if container:
+            running = (
+                self.ssh.run(
+                    f"docker ps --format '{{{{.Names}}}}' | grep -Fx {shlex.quote(container)}"
+                ).stdout.strip()
+                == container
+            )
+            if running:
+                # Preferir escribir desde el host (misma ruta montada); fallback docker exec
+                pass
+
+        res = self.ssh.run(
+            f"python3 -c {shlex.quote(script)}", timeout=60, use_sudo=True
+        )
+        lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
+        if not res.ok or not lines or lines[0] != "OK":
+            detail = (res.stderr or res.stdout or "sin respuesta").strip()
+            raise SSHCommandError(
+                f"No se pudo escribir config entry admin_network: {detail}",
+                exit_code=res.exit_code,
+                stderr=res.stderr,
+            )
+
+        action = lines[1] if len(lines) > 1 else "UPDATED"
+        repaired = lines[4] if len(lines) > 4 else "0"
+        auth_path = f"{self._detect_config_dir()}/.storage/auth"
+        self.ssh.run(
+            f"if test -f {shlex.quote(auth_path)}; then "
+            f"chown --reference={shlex.quote(auth_path)} {shlex.quote(path)} && "
+            f"chmod --reference={shlex.quote(auth_path)} {shlex.quote(path)}; "
+            "fi",
+            use_sudo=True,
+        )
+        repaired_txt = ""
+        if repaired and repaired != "0":
+            repaired_txt = f" Además se normalizaron {repaired} entry(ies) sin discovery_keys."
+        if action == "UNCHANGED":
+            return (
+                f"Integración Admin Network ya estaba en HA "
+                f"({host}:{port}). Reinicie HA si no aparece.{repaired_txt}"
+            )
+        if action == "CREATED":
+            return (
+                f"Integración Admin Network añadida a HA automáticamente "
+                f"({host}:{port}). Reinicie HA para cargarla.{repaired_txt}"
+            )
+        return (
+            f"Integración Admin Network actualizada en HA "
+            f"({host}:{port}). Reinicie HA para aplicar.{repaired_txt}"
+        )
+
+    def repair_config_entries_schema(self) -> str:
+        """Añade discovery_keys/subentries faltantes en TODAS las entries (KeyError safe)."""
+        path = f"{self._detect_config_dir()}/.storage/core.config_entries"
+        if not path.startswith("/"):
+            raise SSHCommandError("No se detectó la ruta de config de Home Assistant.")
+
+        script = f"""
+import json, os
+from datetime import datetime, timezone
+path = {json.dumps(path)}
+
+def now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+
+if not os.path.isfile(path):
+    print("OK")
+    print("ABSENT")
+    raise SystemExit(0)
+
+backup = path + ".bak.horus.discovery_keys"
+with open(path) as fh:
+    doc = json.load(fh)
+if not isinstance(doc, dict):
+    print("ERR")
+    print("JSON inválido")
+    raise SystemExit(1)
+
+data = doc.get("data")
+if not isinstance(data, dict):
+    print("OK")
+    print("EMPTY")
+    raise SystemExit(0)
+entries = data.get("entries")
+if not isinstance(entries, list):
+    print("OK")
+    print("EMPTY")
+    raise SystemExit(0)
+
+repaired = 0
+missing_domains = []
+for entry in entries:
+    if not isinstance(entry, dict):
+        continue
+    changed = False
+    if "discovery_keys" not in entry or not isinstance(entry.get("discovery_keys"), dict):
+        entry["discovery_keys"] = {{}}
+        changed = True
+    if "subentries" not in entry or entry.get("subentries") is None:
+        entry["subentries"] = []
+        changed = True
+    entry.setdefault("options", {{}})
+    entry.setdefault("pref_disable_new_entities", False)
+    entry.setdefault("pref_disable_polling", False)
+    entry.setdefault("unique_id", None)
+    entry.setdefault("disabled_by", None)
+    entry.setdefault("minor_version", 1)
+    if "created_at" not in entry:
+        entry["created_at"] = now()
+        changed = True
+    if "modified_at" not in entry:
+        entry["modified_at"] = now()
+        changed = True
+    if changed:
+        repaired += 1
+        domain = str(entry.get("domain") or "?")
+        if domain not in missing_domains:
+            missing_domains.append(domain)
+
+if repaired == 0:
+    print("OK")
+    print("UNCHANGED")
+    print("0")
+    raise SystemExit(0)
+
+doc["minor_version"] = max(int(doc.get("minor_version") or 1), 5)
+data["entries"] = entries
+doc["data"] = data
+
+with open(backup, "w") as fh:
+    with open(path) as src:
+        fh.write(src.read())
+
+tmp = path + ".tmp_horus_repair_discovery"
+with open(tmp, "w") as fh:
+    json.dump(doc, fh, indent=2)
+    fh.write("\\n")
+os.replace(tmp, path)
+print("OK")
+print("REPAIRED")
+print(str(repaired))
+print(",".join(missing_domains[:20]))
+print(backup)
+"""
+        res = self.ssh.run(
+            f"python3 -c {shlex.quote(script)}", timeout=60, use_sudo=True
+        )
+        lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
+        if not res.ok or not lines or lines[0] != "OK":
+            detail = (res.stderr or res.stdout or "sin respuesta").strip()
+            raise SSHCommandError(
+                f"No se pudo reparar core.config_entries: {detail}",
+                exit_code=res.exit_code,
+                stderr=res.stderr,
+            )
+        action = lines[1] if len(lines) > 1 else "UNCHANGED"
+        if action in ("ABSENT", "EMPTY"):
+            return "No hay core.config_entries que reparar."
+        if action == "UNCHANGED":
+            return "core.config_entries ya tiene discovery_keys/subentries en todas las entries."
+
+        auth_path = f"{self._detect_config_dir()}/.storage/auth"
+        self.ssh.run(
+            f"if test -f {shlex.quote(auth_path)}; then "
+            f"chown --reference={shlex.quote(auth_path)} {shlex.quote(path)} && "
+            f"chmod --reference={shlex.quote(auth_path)} {shlex.quote(path)}; "
+            "fi",
+            use_sudo=True,
+        )
+        count = lines[2] if len(lines) > 2 else "?"
+        domains = lines[3] if len(lines) > 3 else ""
+        backup = lines[4] if len(lines) > 4 else ""
+        return (
+            f"Reparadas {count} entry(ies) (añadido discovery_keys={{}} / subentries=[]). "
+            f"Dominios: {domains or '—'}. Backup: {backup}. "
+            "Reinicie Home Assistant."
+        )
+
+    def remove_admin_network_entry(self) -> str:
+        """Elimina entries domain=admin_network de core.config_entries."""
+        path = f"{self._detect_config_dir()}/.storage/core.config_entries"
+        script = f"""
+import json, os
+path = {json.dumps(path)}
+if not os.path.isfile(path):
+    print("OK")
+    print("ABSENT")
+    raise SystemExit(0)
+with open(path) as fh:
+    doc = json.load(fh)
+data = doc.get("data") if isinstance(doc, dict) else None
+entries = (data or {{}}).get("entries") if isinstance(data, dict) else None
+if not isinstance(entries, list):
+    print("OK")
+    print("ABSENT")
+    raise SystemExit(0)
+kept = [e for e in entries if e.get("domain") != "admin_network"]
+removed = len(entries) - len(kept)
+if removed == 0:
+    print("OK")
+    print("ABSENT")
+    raise SystemExit(0)
+data["entries"] = kept
+doc["data"] = data
+tmp = path + ".tmp_horus_admin_network_rm"
+with open(tmp, "w") as fh:
+    json.dump(doc, fh, indent=2)
+    fh.write("\\n")
+os.replace(tmp, path)
+print("OK")
+print("REMOVED")
+print(str(removed))
+"""
+        res = self.ssh.run(
+            f"python3 -c {shlex.quote(script)}", timeout=60, use_sudo=True
+        )
+        lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
+        if not res.ok or not lines or lines[0] != "OK":
+            detail = (res.stderr or res.stdout or "sin respuesta").strip()
+            raise SSHCommandError(
+                f"No se pudo eliminar config entry admin_network: {detail}",
+                exit_code=res.exit_code,
+                stderr=res.stderr,
+            )
+        if len(lines) > 1 and lines[1] == "ABSENT":
+            return "No había config entry admin_network en HA."
+        count = lines[2] if len(lines) > 2 else "?"
+        auth_path = f"{self._detect_config_dir()}/.storage/auth"
+        self.ssh.run(
+            f"if test -f {shlex.quote(auth_path)}; then "
+            f"chown --reference={shlex.quote(auth_path)} {shlex.quote(path)} && "
+            f"chmod --reference={shlex.quote(auth_path)} {shlex.quote(path)}; "
+            "fi",
+            use_sudo=True,
+        )
+        return f"Eliminada(s) {count} config entry(ies) admin_network de HA."
+
     def set_discovery(self, enabled: bool, restart: bool = True) -> str:
         """Activa o desactiva el escaneo de red (dhcp/ssdp/zeroconf/usb/bluetooth)."""
         status = self.get_status()
@@ -327,6 +988,105 @@ class HaConfigManager:
             else:
                 status.discovery_enabled = False
                 status.discovery_detail = "Sin default_config ni componentes de discovery"
+
+    def _fill_includes_status(
+        self, status: HaConfigurationStatus, content: str, config_dir: str
+    ) -> None:
+        status.has_automation_include = bool(_AUTOMATION_INCLUDE_RE.search(content or ""))
+        status.has_script_include = bool(_SCRIPT_INCLUDE_RE.search(content or ""))
+        status.has_scene_include = bool(_SCENE_INCLUDE_RE.search(content or ""))
+
+        issues: list[str] = []
+        if content and not status.has_automation_include:
+            issues.append("Falta automation: !include automations.yaml")
+        if content and not status.has_script_include:
+            issues.append("Falta script: !include scripts.yaml")
+        if content and not status.has_scene_include:
+            issues.append("Falta scene: !include scenes.yaml")
+        if not content:
+            issues.append("Sin configuration.yaml usable")
+
+        if config_dir:
+            for attr, name in (
+                ("automations_file_exists", "automations.yaml"),
+                ("scripts_file_exists", "scripts.yaml"),
+                ("scenes_file_exists", "scenes.yaml"),
+            ):
+                path = f"{config_dir}/{name}"
+                ok = (
+                    self.ssh.run(
+                        f"test -f {shlex.quote(path)} && echo OK"
+                    ).stdout.strip()
+                    == "OK"
+                )
+                setattr(status, attr, ok)
+                if not ok:
+                    issues.append(f"No existe {name}")
+
+        status.yaml_issues = issues
+        status.yaml_includes_ok = (
+            status.has_automation_include
+            and status.has_script_include
+            and status.has_scene_include
+            and status.automations_file_exists
+            and status.scripts_file_exists
+            and status.scenes_file_exists
+        )
+
+    @staticmethod
+    def _patch_include_lines(raw: str) -> tuple[str, list[str]]:
+        """Inserta includes faltantes sin duplicar. Devuelve (nuevo_contenido, msgs)."""
+        msgs: list[str] = []
+        content = raw if raw.endswith("\n") or not raw else raw + "\n"
+        missing: list[str] = []
+        if not _AUTOMATION_INCLUDE_RE.search(content):
+            missing.append("automation: !include automations.yaml")
+        if not _SCRIPT_INCLUDE_RE.search(content):
+            missing.append("script: !include scripts.yaml")
+        if not _SCENE_INCLUDE_RE.search(content):
+            missing.append("scene: !include scenes.yaml")
+        if not missing:
+            return content, msgs
+
+        block = "\n".join(missing) + "\n"
+        msgs.append(f"Añadido: {', '.join(missing)}.")
+
+        # Preferir insertar tras bloque Horus discovery-off
+        if _DISCOVERY_OFF_RE.search(content):
+            def _after_horus(m: re.Match[str]) -> str:
+                return m.group(0).rstrip("\n") + "\n\n" + block
+
+            return _DISCOVERY_OFF_RE.sub(_after_horus, content, count=1), msgs
+
+        # Si hay scene include parcial, insertar antes
+        scene_m = re.search(r"(?m)^scene:\s*", content)
+        if scene_m and "automation: !include automations.yaml" in missing:
+            idx = scene_m.start()
+            return content[:idx] + block + content[idx:], msgs
+
+        # Insertar antes de http: si existe
+        http_m = re.search(r"(?m)^http:\s*", content)
+        if http_m:
+            idx = http_m.start()
+            return content[:idx] + block + "\n" + content[idx:], msgs
+
+        return content.rstrip() + "\n\n" + block, msgs
+
+    def _backup_remote(self, path: str, suffix: str) -> str:
+        backup_path = path + suffix
+        backup = self.ssh.run(
+            f"cp {shlex.quote(path)} {shlex.quote(backup_path)} 2>/dev/null; echo OK",
+            use_sudo=True,
+        )
+        if backup.stdout.strip() != "OK" and not backup.ok:
+            # Si el archivo no existía aún, no fallar
+            exists = (
+                self.ssh.run(f"test -f {shlex.quote(path)} && echo OK").stdout.strip()
+                == "OK"
+            )
+            if exists:
+                raise SSHCommandError(f"No se pudo crear backup: {backup_path}")
+        return backup_path
 
     @classmethod
     def _disable_discovery_yaml(cls, raw: str) -> str:

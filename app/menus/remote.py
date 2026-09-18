@@ -15,6 +15,7 @@ from ui import (
     panel_cloudflare,
     panel_debian_repair,
     panel_mqtt_diagnostic,
+    panel_self_heal,
     panel_zerotier,
     section,
     success,
@@ -375,6 +376,83 @@ def menu_debian_apt_venv_repair(api: HasControllerAPI) -> None:
             error(str(exc))
 
 
+def menu_self_heal(api: HasControllerAPI) -> None:
+    while True:
+        section("HA / Z-Wave — Self-Heal")
+        info("Ejecutando diagnóstico…")
+        try:
+            status = api.get_self_heal_status()
+        except HasApiError as exc:
+            error(str(exc))
+            break
+
+        panel_self_heal(status)
+        menu_options(
+            "Acciones Self-Heal",
+            [
+                ("1", "Actualizar diagnóstico"),
+                ("2", "Aplicar reparación recomendada (auto)"),
+                ("3", "Solo reiniciar servicio Z-Wave"),
+                ("4", "Solo corregir URL Z-Wave → ws://127.0.0.1:3000"),
+                ("5", "Reparar discovery_keys + reiniciar HA"),
+                ("6", "Limpiar DB shm/wal + iniciar HA"),
+                ("7", "Reiniciar Home Assistant"),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                continue
+            if op == "2":
+                if status.recommended_action in ("none", "review_manual"):
+                    info(status.action_detail or "Nada que reparar automáticamente.")
+                    continue
+                if not confirm(
+                    f"¿Aplicar '{status.recommended_action}' ({status.severity})?",
+                    default=True,
+                ):
+                    continue
+                info("Aplicando reparación…")
+                success(api.run_self_heal())
+                status = api.get_self_heal_status()
+                panel_self_heal(status)
+            elif op == "3":
+                if confirm("¿Reiniciar servicio Z-Wave?", default=True):
+                    info("Reiniciando…")
+                    success(api.restart_zwave_service())
+            elif op == "4":
+                if confirm(
+                    "¿Detener HA, fijar URL ws://127.0.0.1:3000 e iniciar?",
+                    default=True,
+                ):
+                    info("Corrigiendo URL…")
+                    success(api.fix_zwave_ws_url(restart=True))
+            elif op == "5":
+                if confirm("¿Reparar discovery_keys y reiniciar HA?", default=True):
+                    info("Reparando schema…")
+                    success(api.repair_ha_config_entries())
+                    success(api.restart_ha())
+            elif op == "6":
+                warning(
+                    "Se detendrá HA y se moverán solo -shm/-wal (con backup). "
+                    "No se borra home-assistant_v2.db."
+                )
+                if confirm("¿Continuar?", default=False):
+                    info("Limpiando residuos DB…")
+                    success(api.clean_ha_db_wal(restart=True))
+            elif op == "7":
+                if confirm("¿Reiniciar Home Assistant?", default=False):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+            else:
+                warning("Opción no válida.")
+        except HasApiError as exc:
+            error(str(exc))
+
+
 def menu_error_correction(api: HasControllerAPI) -> None:
     while True:
         section("Modo Corrección de errores")
@@ -384,6 +462,7 @@ def menu_error_correction(api: HasControllerAPI) -> None:
                 ("1", "Service cellular"),
                 ("2", "Conexión MQTT (Z-Wave JS UI)"),
                 ("3", "APT + Python venv (Debian 11 / BND)"),
+                ("4", "HA / Z-Wave Self-Heal"),
                 ("0", "Volver al menú principal"),
             ],
         )
@@ -396,5 +475,7 @@ def menu_error_correction(api: HasControllerAPI) -> None:
             menu_mqtt(api)
         elif op == "3":
             menu_debian_apt_venv_repair(api)
+        elif op == "4":
+            menu_self_heal(api)
         else:
             warning("Opción no válida.")

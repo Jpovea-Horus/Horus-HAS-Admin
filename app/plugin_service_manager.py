@@ -22,7 +22,9 @@ if TYPE_CHECKING:
 from paths import (
     DEFAULT_LOCAL_SOURCE as PATHS_LOCAL_SOURCE,
     REMOTE_CUSTOM_COMPONENTS,
-    REMOTE_BASE_PATH
+    REMOTE_CONFIGURATION_YAML,
+    REMOTE_PLUGIN_AWS_CREDENTIALS,
+    get_local_plugin_aws_credentials,
 )
 
 CUSTOM_COMPONENTS_DIR = REMOTE_CUSTOM_COMPONENTS
@@ -54,6 +56,12 @@ class PluginServiceManager:
         parent_exists = parent_check.stdout.strip() == "OK"
 
         if not parent_exists:
+            aws_ok = (
+                self.ssh.run(
+                    f"test -f {shlex.quote(REMOTE_PLUGIN_AWS_CREDENTIALS)} && echo OK"
+                ).stdout.strip()
+                == "OK"
+            )
             return PluginServiceStatus(
                 parent_dir=parent,
                 plugin_dir=PLUGIN_SERVICE_DIR,
@@ -62,6 +70,8 @@ class PluginServiceManager:
                 found_names=[],
                 components=[],
                 plugin_entries=[],
+                aws_credentials_path=REMOTE_PLUGIN_AWS_CREDENTIALS,
+                aws_credentials_exists=aws_ok,
                 error=f"No existe el directorio {parent}",
             )
 
@@ -100,6 +110,13 @@ class PluginServiceManager:
             if domain_res.ok and domain_res.stdout.strip():
                 manifest_domain = domain_res.stdout.strip()
 
+        aws_ok = (
+            self.ssh.run(
+                f"test -f {shlex.quote(REMOTE_PLUGIN_AWS_CREDENTIALS)} && echo OK"
+            ).stdout.strip()
+            == "OK"
+        )
+
         return PluginServiceStatus(
             parent_dir=parent,
             plugin_dir=plugin,
@@ -109,6 +126,8 @@ class PluginServiceManager:
             components=components,
             plugin_entries=plugin_entries,
             manifest_domain=manifest_domain,
+            aws_credentials_path=REMOTE_PLUGIN_AWS_CREDENTIALS,
+            aws_credentials_exists=aws_ok,
         )
 
     def remove(self) -> str:
@@ -175,10 +194,69 @@ class PluginServiceManager:
             raise SSHCommandError("Subida terminó pero no aparece plugin_service en remoto.")
 
         domain_txt = verify.manifest_domain or domain or "(sin manifest)"
-        return (
+        msg = (
             f"Instalado {count} archivo(s): {local} → {PLUGIN_SERVICE_DIR} "
             f"(domain={domain_txt})"
         )
+        try:
+            cred_msg = self.ensure_aws_credentials(replace=False)
+        except ValidationError as exc:
+            cred_msg = f"AWS credentials: {exc}"
+        return f"{msg} | {cred_msg}"
+
+    def ensure_aws_credentials(
+        self,
+        local_path: str | None = None,
+        replace: bool = False,
+    ) -> str:
+        """
+        Sube plugin_service_aws_credentials a /config/ (junto a configuration.yaml).
+        Con replace=False no toca el archivo si ya existe (1 vez y para siempre).
+        """
+        remote = REMOTE_PLUGIN_AWS_CREDENTIALS
+        exists = (
+            self.ssh.run(f"test -f {shlex.quote(remote)} && echo OK").stdout.strip()
+            == "OK"
+        )
+        if exists and not replace:
+            return f"AWS credentials ya en {remote} (sin cambios)."
+
+        resolved = local_path or get_local_plugin_aws_credentials()
+        local = Path(resolved).expanduser()
+        if not local.is_file():
+            raise ValidationError(f"No existe el archivo local: {local}")
+
+        remote_tmp = "/tmp/horus_plugin_service_aws_credentials"
+        sftp = self.ssh.open_sftp()
+        try:
+            sftp.put(str(local), remote_tmp)
+        except Exception as exc:
+            raise SSHCommandError(
+                f"No se pudo subir plugin_service_aws_credentials: {exc}"
+            ) from exc
+        finally:
+            sftp.close()
+
+        ref = shlex.quote(REMOTE_CONFIGURATION_YAML)
+        place = self.ssh.run(
+            f"cp {shlex.quote(remote_tmp)} {shlex.quote(remote)} && "
+            f"chown --reference={ref} {shlex.quote(remote)} && "
+            f"chmod --reference={ref} {shlex.quote(remote)} && "
+            f"rm -f {shlex.quote(remote_tmp)}",
+            use_sudo=True,
+        )
+        if not place.ok:
+            self.ssh.run(f"rm -f {shlex.quote(remote_tmp)}", use_sudo=True)
+            raise SSHCommandError(
+                f"No se pudo instalar {remote}: {place.stderr or place.stdout}"
+            )
+
+        verify = self.ssh.run(f"test -f {shlex.quote(remote)} && echo OK")
+        if verify.stdout.strip() != "OK":
+            raise SSHCommandError(f"Subida terminó pero no aparece {remote}.")
+
+        action = "Reemplazado" if exists else "Subido"
+        return f"{action} {local.name} → {remote}."
 
     def install_from_github(
         self,

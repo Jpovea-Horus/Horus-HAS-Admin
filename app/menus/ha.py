@@ -23,6 +23,7 @@ from ui import (
     panel_plugin_service,
     panel_process_snapshot,
     panel_admin_network,
+    panel_yaml_content,
     panel_zwave_panel,
     section,
     success,
@@ -289,13 +290,10 @@ def menu_backup_manager(api: HasControllerAPI) -> None:
 
 
 def menu_plugin_service(api: HasControllerAPI) -> None:
-    from paths import get_local_plugin_source
-    from plugin_service_manager import (
-        GITHUB_DEFAULT_REF,
-        GITHUB_REPO_URL,
-    )
+    from paths import get_local_plugin_aws_credentials, get_local_plugin_source
 
     default_local = get_local_plugin_source()
+    default_aws = get_local_plugin_aws_credentials()
     while True:
         section("plugin_service (custom component)")
         try:
@@ -312,13 +310,18 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
             warning("No se encontró ninguna carpeta plugin_service* en custom_components/.")
         else:
             error("No se encontró custom_components/ en la ruta esperada.")
+        if not status.aws_credentials_exists:
+            warning(
+                "Falta plugin_service_aws_credentials en /config/ "
+                "(v3 necesita el token de GitHub vía Secrets Manager)."
+            )
 
         menu_options(
             "Acciones",
             [
                 ("1", "Actualizar verificación"),
                 ("2", "Subir / instalar desde carpeta local"),
-                ("3", "Instalar desde GitHub (horus-integration-nexxo)"),
+                ("3", "Subir AWS credentials (1 vez)"),
                 ("4", "Eliminar plugin_service"),
                 ("5", "Reiniciar Home Assistant"),
                 ("0", "Volver"),
@@ -349,35 +352,36 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
                         continue
                 info("Subiendo por SFTP (puede tardar)…")
                 success(api.install_plugin_service(local, replace=True))
+                _offer_aws_credentials_if_missing(api, default_aws)
                 if confirm("¿Desea reiniciar Home Assistant ahora para aplicar cambios?", default=True):
                     info("Reiniciando HA…")
                     success(api.restart_ha())
             elif op == "3":
-                if not status.parent_exists:
-                    error("No se puede instalar: falta custom_components/.")
-                    continue
-                info(f"Fuente: {GITHUB_REPO_URL}")
-                info("Si el repo es privado, use token (env GITHUB_TOKEN / GH_TOKEN) o péguelo aquí.")
-                ref = ask("Rama o tag", default=GITHUB_DEFAULT_REF)
-                token = ask("GitHub token (vacío = usar variable de entorno)", default="")
-                if status.plugin_exists:
-                    warning("Ya existe plugin_service; se reemplazará con la versión de GitHub.")
-                if not confirm(
-                    f"¿Descargar {GITHUB_REPO_URL}@{ref or 'main'} e instalar como plugin_service?",
-                    default=True,
-                ):
-                    continue
-                info("Descargando de GitHub y subiendo por SFTP…")
-                success(
-                    api.install_plugin_service_from_github(
-                        ref=ref or GITHUB_DEFAULT_REF,
-                        token=token or None,
-                        replace=True,
-                    )
+                local = ask_confirmed_path(
+                    "plugin_service_aws_credentials", default_aws
                 )
-                if confirm("¿Desea reiniciar Home Assistant ahora para aplicar cambios?", default=True):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                if not local:
+                    warning("Ruta vacía.")
+                    continue
+                default_aws = local
+                if status.aws_credentials_exists:
+                    warning(
+                        "Ya existe en /config/; por defecto no se reemplaza "
+                        "(1 vez y para siempre)."
+                    )
+                    if not confirm("¿Reemplazar el archivo remoto?", default=False):
+                        info("Sin cambios.")
+                        continue
+                    replace = True
+                else:
+                    if not confirm(
+                        f"¿Subir '{local}' → /config/plugin_service_aws_credentials?",
+                        default=True,
+                    ):
+                        continue
+                    replace = False
+                info("Subiendo AWS credentials…")
+                success(api.ensure_plugin_aws_credentials(local, replace=replace))
             elif op == "4":
                 if not status.plugin_exists:
                     info("No hay nada que eliminar.")
@@ -398,6 +402,27 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
             error(str(exc))
 
 
+def _offer_aws_credentials_if_missing(api: HasControllerAPI, default_aws: str) -> None:
+    """Tras instalar v3, avisa si faltan AWS credentials y ofrece subirlas."""
+    try:
+        st = api.get_plugin_service_status()
+    except HasApiError:
+        return
+    if st.aws_credentials_exists:
+        return
+    warning(
+        "Faltan AWS credentials en /config/. Sin ellas, v3 no puede leer el token "
+        "de GitHub vía Secrets Manager."
+    )
+    if not confirm("¿Subir plugin_service_aws_credentials ahora?", default=True):
+        return
+    local = ask_confirmed_path("plugin_service_aws_credentials", default_aws)
+    if not local:
+        warning("Ruta vacía; se omite la subida.")
+        return
+    success(api.ensure_plugin_aws_credentials(local, replace=False))
+
+
 def menu_admin_network(api: HasControllerAPI) -> None:
     from paths import get_local_admin_network_source
 
@@ -412,7 +437,11 @@ def menu_admin_network(api: HasControllerAPI) -> None:
 
         panel_admin_network(status)
         if status.host.service_active and status.ha.component_exists:
-            success("Host e integración HA presentes.")
+            if status.ha_entry_configured:
+                success("Host, integración HA y config entry presentes.")
+            else:
+                success("Host e integración HA presentes.")
+                warning("Falta config entry en HA (use opción 6).")
         elif status.host.service_active:
             warning("Servicio host OK; falta copiar la integración a custom_components.")
         elif status.ha.component_exists:
@@ -424,16 +453,18 @@ def menu_admin_network(api: HasControllerAPI) -> None:
             "Acciones",
             [
                 ("1", "Actualizar verificación"),
-                ("2", "Instalar TODO (host + integración HA)"),
+                ("2", "Instalar TODO (host + integración HA + config entry)"),
                 ("3", "Instalar solo servicio host"),
                 ("4", "Instalar solo integración HA"),
-                ("5", "Mostrar API key"),
-                ("6", "Diagnosticar WiFi (wlan unavailable)"),
-                ("7", "Reparar WiFi ahora"),
-                ("8", "Eliminar TODO (integración + servicio host)"),
-                ("9", "Eliminar solo servicio host"),
-                ("10", "Eliminar solo integración HA"),
-                ("11", "Reiniciar Home Assistant"),
+                ("5", "Mostrar API key (enmascarada / completa)"),
+                ("6", "Configurar integración en HA (inyectar API key)"),
+                ("7", "Reparar core.config_entries (KeyError discovery_keys)"),
+                ("8", "Diagnosticar WiFi (wlan unavailable)"),
+                ("9", "Reparar WiFi ahora"),
+                ("10", "Eliminar TODO (integración + servicio host)"),
+                ("11", "Eliminar solo servicio host"),
+                ("12", "Eliminar solo integración HA"),
+                ("13", "Reiniciar Home Assistant"),
                 ("0", "Volver"),
             ],
         )
@@ -450,8 +481,9 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                     continue
                 default_local = local
                 warning(
-                    "Se instalará el servicio en el SO (/opt/admin_network) y "
-                    "se copiará custom_components/admin_network."
+                    "Se instalará el servicio en el SO (/opt/admin_network), "
+                    "se copiará custom_components/admin_network y se inyectará "
+                    "la API key en Home Assistant."
                 )
                 if not confirm("¿Instalar Admin Network completo?", default=True):
                     continue
@@ -461,8 +493,8 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                     info("Reiniciando HA…")
                     success(api.restart_ha())
                 info(
-                    "En HA: Añadir integración 'Admin Network' → "
-                    "127.0.0.1 / 8765 / API key mostrada arriba."
+                    "Tras reiniciar, Admin Network debería aparecer ya configurado "
+                    "en Dispositivos y Servicios (127.0.0.1:8765)."
                 )
             elif op == "3":
                 local = ask_confirmed_path("admin_network (o host/)", default_local)
@@ -486,8 +518,37 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                         info("Reiniciando HA…")
                         success(api.restart_ha())
             elif op == "5":
-                success(f"API key: {api.get_admin_network_api_key()}")
+                from local_config import mask_secret
+
+                key = api.get_admin_network_api_key()
+                info(f"API key (enmascarada): {mask_secret(key)}")
+                if confirm("¿Mostrar la API key completa en pantalla?", default=False):
+                    warning("Visible en pantalla / historial del terminal.")
+                    success(f"API key: {key}")
             elif op == "6":
+                if not status.host.env_exists and not status.host.api_key:
+                    error("No hay API key en el host. Instale el servicio host primero.")
+                    continue
+                if confirm(
+                    "¿Inyectar host/port/API key en core.config_entries de HA?",
+                    default=True,
+                ):
+                    success(api.configure_admin_network_ha_entry(force=True))
+                    if confirm("¿Reiniciar Home Assistant ahora?", default=True):
+                        info("Reiniciando HA…")
+                        success(api.restart_ha())
+            elif op == "7":
+                warning(
+                    "NO borre core.config_entries completo (perdería todas las "
+                    "integraciones). Esta reparación solo añade discovery_keys/subentries "
+                    "faltantes a las entries existentes."
+                )
+                if confirm("¿Reparar schema de core.config_entries ahora?", default=True):
+                    success(api.repair_ha_config_entries())
+                    if confirm("¿Reiniciar Home Assistant ahora?", default=True):
+                        info("Reiniciando HA…")
+                        success(api.restart_ha())
+            elif op == "8":
                 info("Diagnosticando WiFi…")
                 diag = api.diagnose_wifi()
                 if diag.healthy:
@@ -501,7 +562,7 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                         "Watchdog WiFi no activo. Reinstale el servicio host "
                         "para prevenir caídas overnight."
                     )
-            elif op == "7":
+            elif op == "9":
                 warning(
                     "Puede reiniciar NetworkManager (eth/ZT se reconectan solos). "
                     "La sesión SSH por ZeroTier/LAN suele recuperarse."
@@ -509,7 +570,7 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                 if confirm("¿Reparar WiFi ahora?", default=True):
                     info("Aplicando recovery WiFi…")
                     success(api.repair_wifi(force_nm_restart=True))
-            elif op == "8":
+            elif op == "10":
                 if not status.ha.component_exists and not status.host.dir_exists:
                     info("No hay nada que eliminar.")
                     continue
@@ -526,20 +587,23 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                         success(api.remove_admin_network_host(wipe_env=wipe))
                     except Exception as e:
                         error(f"Error Host: {e}")
-            elif op == "9":
+            elif op == "11":
                 if not status.host.dir_exists and not status.host.service_active:
                     info("No hay servicio host que eliminar.")
                     continue
                 wipe = confirm("¿Borrar también /etc/admin_network.env (API key)?", default=False)
                 if confirm("¿Eliminar servicio host admin_network?", default=False):
                     success(api.remove_admin_network_host(wipe_env=wipe))
-            elif op == "10":
-                if not status.ha.component_exists:
+            elif op == "12":
+                if not status.ha.component_exists and not status.ha_entry_configured:
                     info("No hay integración HA que eliminar.")
                     continue
-                if confirm("¿Eliminar custom_components/admin_network?", default=False):
+                if confirm(
+                    "¿Eliminar custom_components/admin_network y su config entry?",
+                    default=False,
+                ):
                     success(api.remove_admin_network_ha())
-            elif op == "11":
+            elif op == "13":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
                     info("Reiniciando HA…")
                     success(api.restart_ha())
@@ -719,6 +783,15 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
             )
         else:
             success("Discovery desactivado: no se escanean dispositivos nuevos en red.")
+        if status.yaml_includes_ok:
+            success("Includes automation/script/scene OK.")
+        else:
+            warning(
+                "Includes incompletos: las automatizaciones pueden dar timeout al guardar. "
+                "Use opción 9 para reparar."
+            )
+            for issue in status.yaml_issues[:4]:
+                warning(f"  • {issue}")
 
         menu_options(
             "Acciones",
@@ -733,6 +806,11 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                     if status.discovery_enabled
                     else "Activar Discovery (escaneo de red)",
                 ),
+                ("6", "Ver configuration.yaml"),
+                ("7", "Ver automations.yaml"),
+                ("8", "Validar sintaxis (hass check_config)"),
+                ("9", "Reparar includes (automation/script/scene)"),
+                ("10", "Eliminar YAML (submenú)"),
                 ("0", "Volver"),
             ],
         )
@@ -786,8 +864,107 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                     if confirm("¿Activar Discovery de nuevo?", default=False):
                         info("Activando Discovery y reiniciando HA…")
                         success(api.set_ha_discovery(enabled=True, restart=True))
+            elif op == "6":
+                info("Leyendo configuration.yaml…")
+                path, content = api.get_ha_configuration_yaml()
+                panel_yaml_content(content, path)
+                ask("Pulse Enter para continuar")
+            elif op == "7":
+                info("Leyendo automations.yaml…")
+                path, content = api.get_ha_automations_yaml()
+                panel_yaml_content(content, path)
+                ask("Pulse Enter para continuar")
+            elif op == "8":
+                info(
+                    "Validando con hass --script check_config "
+                    "(puede tardar 1–3 min; útil tras timeout de automatizaciones)…"
+                )
+                result = api.check_ha_config()
+                if result.startswith("Errores detectados"):
+                    error(result)
+                    warning(
+                        "Corrija el YAML indicado, luego use opción 8 de nuevo "
+                        "y recargue/reinicie HA para que las automatizaciones aparezcan."
+                    )
+                else:
+                    success(result)
+                if confirm("¿Reiniciar Home Assistant ahora?", default=False):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+                ask("Pulse Enter para continuar")
+            elif op == "9":
+                warning(
+                    "Se añadirán includes faltantes y se crearán "
+                    "automations/scripts/scenes.yaml vacíos si no existen. "
+                    "Backup: .bak.horus.includes"
+                )
+                if confirm("¿Reparar includes ahora?", default=True):
+                    info("Reparando includes…")
+                    success(api.ensure_ha_yaml_includes(restart=False))
+                    if confirm("¿Reiniciar Home Assistant ahora?", default=True):
+                        info("Reiniciando HA…")
+                        success(api.restart_ha())
+            elif op == "10":
+                _menu_delete_ha_yaml(api)
             else:
                 warning("Opción no válida.")
+        except ValidationError as exc:
+            error(str(exc))
+        except HasApiError as exc:
+            error(str(exc))
+
+
+def _menu_delete_ha_yaml(api: HasControllerAPI) -> None:
+    """Submenú: eliminar YAML de /config con backup."""
+    while True:
+        section("Eliminar YAML de Home Assistant")
+        menu_options(
+            "¿Qué archivo eliminar?",
+            [
+                ("1", "automations.yaml"),
+                ("2", "scripts.yaml"),
+                ("3", "scenes.yaml"),
+                ("4", "configuration.yaml (peligroso)"),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        mapping = {
+            "1": "automations.yaml",
+            "2": "scripts.yaml",
+            "3": "scenes.yaml",
+            "4": "configuration.yaml",
+        }
+        filename = mapping.get(op)
+        if not filename:
+            warning("Opción no válida.")
+            continue
+        try:
+            warning(f"Se creará backup .bak.horus.delete.* y se eliminará {filename}.")
+            if filename == "configuration.yaml":
+                warning(
+                    "Sin configuration.yaml HA puede no arrancar bien. "
+                    "Se recomienda recrear la plantilla base después."
+                )
+            if not confirm(f"¿Eliminar {filename}?", default=False):
+                continue
+            typed = ask("Escriba ELIMINAR para confirmar").strip()
+            if typed != "ELIMINAR":
+                info("Cancelado.")
+                continue
+            recreate = False
+            if filename == "configuration.yaml":
+                recreate = confirm(
+                    "¿Recrear plantilla base de configuration.yaml con includes?",
+                    default=True,
+                )
+            info(f"Eliminando {filename}…")
+            success(api.delete_ha_yaml_file(filename, recreate_config=recreate))
+            if confirm("¿Reiniciar Home Assistant ahora?", default=True):
+                info("Reiniciando HA…")
+                success(api.restart_ha())
         except ValidationError as exc:
             error(str(exc))
         except HasApiError as exc:

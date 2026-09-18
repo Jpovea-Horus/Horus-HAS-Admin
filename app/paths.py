@@ -25,6 +25,12 @@ INTEGRATION_HELPER = "helper_manager"
 INTEGRATION_ZWAVE_PANEL = "panel_zwave_js_ui"
 INTEGRATION_PLUGIN = "plugin_service"
 INTEGRATION_PLUGIN_REL = os.path.join("plugin_service_energy", "plugin_service")
+INTEGRATION_PLUGIN_AWS_CREDENTIALS = "plugin_service_aws_credentials"
+INTEGRATION_PLUGIN_AWS_CREDENTIALS_REL = os.path.join(
+    "plugin_service_energy",
+    "plugin_service_aws_credentials - folder",
+    "plugin_service_aws_credentials",
+)
 ZWAVE_PANEL_JS = "zwave-panel.js"
 
 _DEV_INTEGRATIONS_ROOT = os.path.join(
@@ -134,6 +140,30 @@ def get_local_zwave_panel_js() -> str:
     """Ruta local de zwave-panel.js dentro de integrations/panel_zwave_js_ui."""
     return os.path.join(get_local_zwave_panel_source(), ZWAVE_PANEL_JS)
 
+
+def get_local_plugin_aws_credentials() -> str:
+    """Archivo local plugin_service_aws_credentials (junto a plugin_service_energy)."""
+    env_root = (os.environ.get("HAS_INTEGRATIONS_DIR") or "").strip()
+    known = os.path.join(_KNOWN_INTEGRATIONS_ROOT, INTEGRATION_PLUGIN_AWS_CREDENTIALS_REL)
+    candidates: list[str] = []
+    if env_root:
+        candidates.append(os.path.join(env_root, INTEGRATION_PLUGIN_AWS_CREDENTIALS_REL))
+        candidates.append(os.path.join(env_root, INTEGRATION_PLUGIN_AWS_CREDENTIALS))
+    candidates.extend(
+        [
+            known,
+            os.path.join(EXE_DIR, "integrations", INTEGRATION_PLUGIN_AWS_CREDENTIALS),
+            os.path.join(BASE_PATH, "integrations", INTEGRATION_PLUGIN_AWS_CREDENTIALS),
+            os.path.join(os.getcwd(), "integrations", INTEGRATION_PLUGIN_AWS_CREDENTIALS),
+            os.path.join(_DEV_INTEGRATIONS_ROOT, INTEGRATION_PLUGIN_AWS_CREDENTIALS_REL),
+        ]
+    )
+    for path in _unique_paths(candidates):
+        if path and os.path.isfile(path):
+            return path
+    return known
+
+
 def get_cloudflared_exe():
     # Opción 1: Al lado del .exe
     external_exe = os.path.join(EXE_DIR, "cloudflared.exe")
@@ -158,6 +188,7 @@ def get_remote_path(subpath):
 REMOTE_CONFIG_DIR = get_remote_path("config")
 REMOTE_CUSTOM_COMPONENTS = f"{REMOTE_CONFIG_DIR}/custom_components"
 REMOTE_CONFIGURATION_YAML = f"{REMOTE_CONFIG_DIR}/configuration.yaml"
+REMOTE_PLUGIN_AWS_CREDENTIALS = f"{REMOTE_CONFIG_DIR}/plugin_service_aws_credentials"
 REMOTE_ZWAVE_STORE = get_remote_path("zwave-js-ui-store")
 REMOTE_COMPOSE_DIR = REMOTE_BASE_PATH
 REMOTE_COMPOSE_FILE = f"{REMOTE_COMPOSE_DIR}/docker-compose.yml"

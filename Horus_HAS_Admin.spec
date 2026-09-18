@@ -31,6 +31,14 @@ if os.path.isdir(helper_cc):
     extra_datas.append((helper_cc, "integrations/helper_manager/custom_components"))
 if os.path.isdir(zwave_panel_src):
     extra_datas.append((zwave_panel_src, "integrations/panel_zwave_js_ui"))
+aws_cred_src = os.path.join(
+    INTEGRATIONS_SRC,
+    "plugin_service_energy",
+    "plugin_service_aws_credentials - folder",
+    "plugin_service_aws_credentials",
+)
+if os.path.isfile(aws_cred_src):
+    extra_datas.append((aws_cred_src, "integrations/plugin_service_aws_credentials"))
 
 a = Analysis(
     [os.path.join(APP_DIR, "main.py")],

@@ -26,6 +26,7 @@ from plugin_service_manager import PluginServiceManager
 from ha_integration_manager import HaIntegrationManager
 from admin_network_host_manager import AdminNetworkHostManager
 from debian_repair_manager import DebianRepairManager
+from self_heal_manager import SelfHealManager
 from zwave_panel_manager import ZwavePanelManager
 from models import (
     BackupEntry,
@@ -44,6 +45,7 @@ from models import (
     AdminNetworkInstallStatus,
     DebianRepairStatus,
     HaIntegrationStatus,
+    SelfHealStatus,
     WifiDiagnoseStatus,
     ZwavePanelStatus,
     ZeroTierStatus,
@@ -72,6 +74,7 @@ class HasControllerAPI:
         self.admin_network_host = AdminNetworkHostManager(self.ssh)
         self.debian_repair = DebianRepairManager(self.ssh)
         self.ha_config = HaConfigManager(self.ssh)
+        self.self_heal = SelfHealManager(self.ssh, self.ha_config)
         self.cloudflare = CloudflareManager(self.ssh)
         self.backups = BackupManager(self.ssh)
         self.maintenance = MaintenanceManager(self.ssh)
@@ -169,31 +172,108 @@ class HasControllerAPI:
             ref=ref, token=token, replace=replace
         )
 
+    def ensure_plugin_aws_credentials(
+        self,
+        local_path: str | None = None,
+        replace: bool = False,
+    ) -> str:
+        return self.plugin_service.ensure_aws_credentials(
+            local_path=local_path, replace=replace
+        )
+
     def get_admin_network_status(self) -> AdminNetworkInstallStatus:
+        host = self.admin_network_host.get_status()
+        ha = self.admin_network_ha.get_status()
+        entry_ok = False
+        entry_detail = ""
+        try:
+            entry_ok, entry_detail = self.ha_config.get_admin_network_entry_status(
+                host="127.0.0.1", port=host.port or 8765
+            )
+        except Exception as exc:
+            entry_detail = f"No se pudo leer config entry: {exc}"
         return AdminNetworkInstallStatus(
-            ha=self.admin_network_ha.get_status(),
-            host=self.admin_network_host.get_status(),
+            ha=ha,
+            host=host,
+            ha_entry_configured=entry_ok,
+            ha_entry_detail=entry_detail,
         )
 
     def install_admin_network(self, local_path: str, replace: bool = True) -> str:
         host_msg = self.admin_network_host.install(local_path)
         ha_msg = self.admin_network_ha.install(local_path, replace=replace)
-        return f"{host_msg}\n{ha_msg}"
+        try:
+            entry_msg = self._configure_admin_network_ha_entry()
+        except SSHCommandError as exc:
+            entry_msg = (
+                f"Host e integración OK, pero no se auto-configuró en HA: {exc}. "
+                "Use la opción «Configurar integración en HA»."
+            )
+        return f"{host_msg}\n{ha_msg}\n{entry_msg}"
 
     def install_admin_network_host(self, local_path: str) -> str:
         return self.admin_network_host.install(local_path)
 
     def install_admin_network_ha(self, local_path: str, replace: bool = True) -> str:
-        return self.admin_network_ha.install(local_path, replace=replace)
+        ha_msg = self.admin_network_ha.install(local_path, replace=replace)
+        try:
+            entry_msg = self._configure_admin_network_ha_entry()
+            return f"{ha_msg}\n{entry_msg}"
+        except SSHCommandError as exc:
+            return (
+                f"{ha_msg}\n"
+                f"Integración subida, pero no se auto-configuró en HA: {exc}. "
+                "Use 'Mostrar API key' y añada la integración manualmente."
+            )
 
     def remove_admin_network_ha(self) -> str:
-        return self.admin_network_ha.remove()
+        msgs: list[str] = []
+        try:
+            msgs.append(self.ha_config.remove_admin_network_entry())
+        except SSHCommandError as exc:
+            msgs.append(f"Config entry: {exc}")
+        msgs.append(self.admin_network_ha.remove())
+        return " ".join(msgs)
 
     def remove_admin_network_host(self, wipe_env: bool = False) -> str:
         return self.admin_network_host.remove(wipe_env=wipe_env)
 
     def get_admin_network_api_key(self) -> str:
         return self.admin_network_host.read_api_key()
+
+    def configure_admin_network_ha_entry(self, force: bool = False) -> str:
+        """Inyecta host/port/api_key en core.config_entries (sin reinstalar archivos)."""
+        return self._configure_admin_network_ha_entry(force=force)
+
+    def repair_ha_config_entries(self) -> str:
+        """Repara KeyError discovery_keys en core.config_entries (sin borrar integraciones)."""
+        return self.ha_config.repair_config_entries_schema()
+
+    def get_self_heal_status(self) -> SelfHealStatus:
+        return self.self_heal.diagnose()
+
+    def run_self_heal(self) -> str:
+        """Aplica la reparación mínima recomendada por el diagnóstico HA/Z-Wave."""
+        return self.self_heal.run_auto_repair()
+
+    def fix_zwave_ws_url(self, restart: bool = True) -> str:
+        return self.self_heal.fix_zwave_ws_url(restart=restart)
+
+    def restart_zwave_service(self) -> str:
+        return self.self_heal.restart_zwave_service()
+
+    def clean_ha_db_wal(self, restart: bool = True) -> str:
+        return self.self_heal.clean_db_wal_shm(restart=restart)
+
+    def _configure_admin_network_ha_entry(self, force: bool = False) -> str:
+        status = self.admin_network_host.get_status()
+        api_key = status.api_key or self.admin_network_host.read_api_key()
+        return self.ha_config.ensure_admin_network_entry(
+            api_key=api_key,
+            host="127.0.0.1",
+            port=status.port or 8765,
+            force=force,
+        )
 
     def diagnose_wifi(self) -> WifiDiagnoseStatus:
         return self.network.diagnose_wifi()
@@ -242,6 +322,28 @@ class HasControllerAPI:
 
     def restart_ha(self) -> str:
         return self.ha_config.restart_ha()
+
+    def get_ha_configuration_yaml(self) -> tuple[str, str]:
+        """Devuelve (path, contenido) de configuration.yaml."""
+        return self.ha_config.get_full_configuration_yaml()
+
+    def get_ha_automations_yaml(self) -> tuple[str, str]:
+        """Devuelve (path, contenido) de automations.yaml."""
+        return self.ha_config.get_automations_yaml()
+
+    def check_ha_config(self) -> str:
+        """Ejecuta hass --script check_config en el contenedor."""
+        return self.ha_config.check_ha_config()
+
+    def ensure_ha_yaml_includes(self, restart: bool = False) -> str:
+        """Repara automation/script/scene includes y crea YAML vacíos si faltan."""
+        return self.ha_config.ensure_yaml_includes(restart=restart)
+
+    def delete_ha_yaml_file(self, filename: str, recreate_config: bool = False) -> str:
+        """Elimina un YAML permitido de /config (con backup)."""
+        return self.ha_config.delete_ha_yaml_file(
+            filename, recreate_config=recreate_config
+        )
 
     def disable_mqtt_zwave(self) -> str:
         return self.mqtt.disable_mqtt()

@@ -3,7 +3,11 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-from paths import REMOTE_CUSTOM_COMPONENTS, REMOTE_CONFIGURATION_YAML
+from paths import (
+    REMOTE_CUSTOM_COMPONENTS,
+    REMOTE_CONFIGURATION_YAML,
+    REMOTE_PLUGIN_AWS_CREDENTIALS,
+)
 
 
 @dataclass
@@ -168,6 +172,8 @@ class PluginServiceStatus:
     components: list[str] = field(default_factory=list)
     plugin_entries: list[str] = field(default_factory=list)
     manifest_domain: str = ""
+    aws_credentials_path: str = REMOTE_PLUGIN_AWS_CREDENTIALS
+    aws_credentials_exists: bool = False
     error: str = ""
 
 
@@ -202,6 +208,15 @@ class HaConfigurationStatus:
     proxy_ok: bool = False
     discovery_enabled: bool = True
     discovery_detail: str = ""
+    # Includes automation/script/scene (timeout UI si faltan)
+    has_automation_include: bool = False
+    has_script_include: bool = False
+    has_scene_include: bool = False
+    automations_file_exists: bool = False
+    scripts_file_exists: bool = False
+    scenes_file_exists: bool = False
+    yaml_includes_ok: bool = False
+    yaml_issues: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -311,6 +326,8 @@ class AdminNetworkInstallStatus:
 
     ha: HaIntegrationStatus
     host: AdminNetworkHostStatus
+    ha_entry_configured: bool = False
+    ha_entry_detail: str = ""
 
 
 @dataclass
@@ -345,4 +362,31 @@ class ZwavePanelStatus:
     yaml_ok: bool = False
     has_iframe_zwave: bool = False
     installed: bool = False
+    error: str = ""
+
+
+@dataclass
+class SelfHealStatus:
+    """Diagnóstico HA / Z-Wave para autoreparación segura."""
+
+    ha_container: str = ""
+    ha_running: bool = False
+    ha_port_8123_ok: bool = False
+    ha_cpu_percent: float = -1.0
+    ha_cpu_high: bool = False
+    disk_free_pct: float = -1.0
+    disk_low: bool = False
+    log_discovery_keys_error: bool = False
+    log_db_corrupt: bool = False
+    log_zwave_ws_error: bool = False
+    log_sample: list[str] = field(default_factory=list)
+    zwave_service_name: str = ""
+    zwave_service_active: bool = False
+    zwave_process_running: bool = False
+    port_3000_open: bool = False
+    ha_zwave_ws_url: str = ""
+    zwave_ws_url_ok: bool = False
+    severity: str = "ok"  # ok | s0 | s1 | s2 | s3 | s4
+    recommended_action: str = "none"
+    action_detail: str = ""
     error: str = ""
