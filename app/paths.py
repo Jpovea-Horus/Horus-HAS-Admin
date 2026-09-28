@@ -2,7 +2,7 @@ import os
 import sys
 
 APP_NAME = "Gestor Nexxo 800"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 
 def get_base_path():
     """Retorna la ruta base de la aplicación (desempaquetada si es frozen)."""

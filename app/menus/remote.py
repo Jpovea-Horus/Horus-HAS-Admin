@@ -459,10 +459,12 @@ def menu_error_correction(api: HasControllerAPI) -> None:
         menu_options(
             "Corrección",
             [
-                ("1", "Service cellular"),
-                ("2", "Conexión MQTT (Z-Wave JS UI)"),
-                ("3", "APT + Python venv (Debian 11 / BND)"),
-                ("4", "HA / Z-Wave Self-Heal"),
+                ("1", "Service cellular - Deshabilitar o reactivar el módulo LTE/4G"),
+                ("2", "Conexión MQTT (Z-Wave JS UI) - Desactivar MQTT si solo se usa Z-Wave JS"),
+                ("3", "APT + Python venv (Debian 11 / BND) - Reparar repositorios y entorno Python"),
+                ("4", "HA / Z-Wave Self-Heal - Diagnóstico y reparación automática HA ↔ Z-Wave"),
+                ("5", "Reparar registro HA (Fix Registry/Integraciones) - Soluciona errores en la base de datos de integraciones"),
+                ("6", "Limpiar residuos de Base de Datos (Fix Historial) - Arregla historiales que no cargan"),
                 ("0", "Volver al menú principal"),
             ],
         )
@@ -477,5 +479,29 @@ def menu_error_correction(api: HasControllerAPI) -> None:
             menu_debian_apt_venv_repair(api)
         elif op == "4":
             menu_self_heal(api)
+        elif op == "5":
+            warning(
+                "Esta reparación añade discovery_keys faltantes al registro de HA. "
+                "Soluciona integraciones que no aparecen y errores de historial."
+            )
+            if confirm("¿Reparar registro de integraciones y reiniciar HA?", default=True):
+                try:
+                    info("Reparando schema de core.config_entries…")
+                    success(api.repair_ha_config_entries())
+                    info("Reiniciando Home Assistant para aplicar cambios…")
+                    success(api.restart_ha())
+                except HasApiError as exc:
+                    error(str(exc))
+        elif op == "6":
+            warning(
+                "Se detendrá HA y se moverán solo los archivos temporales de la DB (-shm/-wal). "
+                "Esto suele arreglar historiales que no cargan sin borrar tus datos."
+            )
+            if confirm("¿Limpiar residuos de base de datos y reiniciar HA?", default=True):
+                try:
+                    info("Limpiando residuos DB…")
+                    success(api.clean_ha_db_wal(restart=True))
+                except HasApiError as exc:
+                    error(str(exc))
         else:
             warning("Opción no válida.")

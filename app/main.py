@@ -19,7 +19,7 @@ _setup_working_dir()
 
 from controller import HasControllerAPI
 from exceptions import HasApiError, NotConnectedError
-from menus.connect import connect_flow, reconnect_or_prompt
+from menus.connect import clear_connect_memory, connect_flow, reconnect_or_prompt
 from menus.diagnostics import menu_review_diagnostics
 from menus.ha import menu_administrative
 from menus.network import menu_ethernet, menu_network_status, menu_wifi
@@ -40,7 +40,7 @@ from ui import (
 
 
 def main_menu(api: HasControllerAPI) -> str:
-    """Bucle del menú. Devuelve: exit | reconnect | lost."""
+    """Bucle del menú. Devuelve: exit | next | lost."""
     system_info = api.get_system_info()
 
     while True:
@@ -55,7 +55,7 @@ def main_menu(api: HasControllerAPI) -> str:
                 ("5", "Consultar Conexión Remota"),
                 ("6", "Diagnóstico y revisión"),
                 ("7", "Modo Corrección de errores"),
-                ("C", "Cambiar / reconectar controlador"),
+                ("P", "Próximo (Cambiar controlador)"),
                 ("R", "Actualizar info sistema"),
                 ("0", "Salir"),
             ],
@@ -67,8 +67,8 @@ def main_menu(api: HasControllerAPI) -> str:
         try:
             if op == "0":
                 return "exit"
-            if op == "C":
-                return "reconnect"
+            if op == "P":
+                return "next"
             if op == "1":
                 menu_network_status(api)
                 ask("Pulse Enter para volver al menú")
@@ -111,10 +111,18 @@ def main() -> None:
             result = main_menu(api)
             if result == "exit":
                 break
-            if result in ("reconnect", "lost"):
+            if result == "next":
                 api.disconnect()
-                if result == "lost":
-                    warning("La sesión SSH se cortó (p. ej. cambio de IP).")
+                clear_connect_memory()
+                banner()
+                if not connect_flow(api):
+                    if confirm("¿Reintentar conexión?", default=True):
+                        continue
+                    break
+                continue
+            if result == "lost":
+                api.disconnect()
+                warning("La sesión SSH se cortó (p. ej. cambio de IP).")
                 if not reconnect_or_prompt(api):
                     if confirm("¿Reintentar conexión?", default=True):
                         continue

@@ -40,12 +40,14 @@ class TofuHostKeyPolicy(paramiko.MissingHostKeyPolicy):
 
 
 def resolve_cloudflare_hostname(host_or_id: str, domain: str = CLOUDFLARE_DOMAIN) -> str:
-    """Convierte ID corto (ssh-xx00) o hostname completo a FQDN Cloudflare."""
+    """Convierte ID corto (4 dígitos MAC o ssh-xx00) o hostname completo a FQDN Cloudflare."""
     value = host_or_id.strip().lower()
     if not value:
         raise SSHConnectionError("Hostname Cloudflare vacío.")
     if "." in value:
         return value
+    if len(value) == 4 and all(c in "0123456789abcdef" for c in value):
+        value = f"ssh-{value}"
     return f"{value}.{domain}"
 
 

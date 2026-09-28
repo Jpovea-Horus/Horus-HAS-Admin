@@ -21,6 +21,14 @@ class ConnectMemory:
 memory = ConnectMemory()
 
 
+def clear_connect_memory() -> None:
+    """Borra credenciales en memoria para forzar un nuevo flujo de conexión."""
+    memory.host_input = ""
+    memory.user = "root"
+    memory.password = ""
+    memory.use_cloudflare = False
+
+
 def connect_flow(api: HasControllerAPI) -> bool:
     section("Conexión SSH al controlador")
     recent = load_hosts()
@@ -84,10 +92,17 @@ def connect_flow(api: HasControllerAPI) -> bool:
         use_cloudflare = True
         info("Requiere cloudflared en el PATH (Access SSH).")
         info("Hostname completo: ssh-xx00.rhorus.com")
-        host = ask("Hostname / ID del túnel SSH")
+        host = ask("Hostname / ID del túnel SSH (o 4 últimos MAC)")
         if not host:
             error("Debe indicar un hostname o ID.")
             return False
+        
+        # Feedback inmediato si se usan 4 dígitos
+        if len(host.strip()) == 4 and all(c.lower() in "0123456789abcdef" for c in host.strip()):
+            from ssh_client import resolve_cloudflare_hostname
+            host = resolve_cloudflare_hostname(host)
+            info(f"Hostname generado: [bold]{host}[/bold]")
+            
         user = ask("Usuario", default="root")
     else:
         host = ask("IP del controlador", default=memory.host_input if not memory.use_cloudflare else "")

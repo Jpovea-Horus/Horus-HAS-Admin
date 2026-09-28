@@ -123,6 +123,23 @@ class HasControllerAPI:
     def change_ha_user_password(self, username: str, new_password: str) -> str:
         return self.ha_users.change_password(username, new_password)
 
+    def update_ha_user(
+        self,
+        username: str,
+        *,
+        new_name: str | None = None,
+        is_admin: bool | None = None,
+    ) -> str:
+        return self.ha_users.update_user(
+            username, new_name=new_name, is_admin=is_admin
+        )
+
+    def delete_ha_user(self, username: str) -> str:
+        return self.ha_users.delete_user(username)
+
+    def set_ha_user_owner(self, username: str) -> str:
+        return self.ha_users.set_owner(username)
+
     def add_ha_user(self, username: str, password: str, is_admin: bool = False) -> str:
         return self.ha_users.add_user(username, password, is_admin=is_admin)
 

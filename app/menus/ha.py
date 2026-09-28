@@ -69,8 +69,11 @@ def menu_ha_users(api: HasControllerAPI) -> None:
             "Acciones",
             [
                 ("1", "Actualizar listado"),
-                ("2", "Cambiar / resetear contraseña"),
-                ("3", "Crear usuario"),
+                ("2", "Editar usuario (nombre / rol)"),
+                ("3", "Cambiar / resetear contraseña"),
+                ("4", "Crear usuario"),
+                ("5", "Eliminar usuario"),
+                ("6", "Designar Owner"),
                 ("0", "Volver"),
             ],
         )
@@ -81,6 +84,52 @@ def menu_ha_users(api: HasControllerAPI) -> None:
             if op == "1":
                 continue
             if op == "2":
+                username = ask("Usuario (login HA)").strip().lower()
+                if not username:
+                    warning("Debe indicar un usuario.")
+                    continue
+                target = next((u for u in status.users if u.username == username), None)
+                if not target:
+                    warning(f"'{username}' no aparece en el listado.")
+                    continue
+                if target.incomplete or not target.user_id:
+                    error(
+                        f"'{username}' está incompleto (sin id). "
+                        "No se puede editar; elimínelo o créelo de nuevo."
+                    )
+                    continue
+                info(
+                    f"Actual: nombre='{target.name or '-'}', "
+                    f"rol={'Owner' if target.is_owner else ('Admin' if target.is_admin else 'Usuario')}"
+                )
+                new_name_raw = ask(
+                    "Nuevo nombre (vacío = no cambiar)",
+                    default="",
+                )
+                new_name = new_name_raw.strip() if new_name_raw.strip() else None
+
+                is_admin: bool | None = None
+                if target.is_owner:
+                    info("Owner: solo se puede cambiar el nombre (no el rol).")
+                else:
+                    if confirm("¿Cambiar el rol (Admin/Usuario)?", default=False):
+                        is_admin = confirm(
+                            "¿Dejarlo como administrador?",
+                            default=target.is_admin,
+                        )
+
+                if new_name is None and is_admin is None:
+                    info("Sin cambios.")
+                    continue
+                warning("Home Assistant se reiniciará para aplicar los cambios.")
+                if confirm(f"¿Actualizar usuario '{username}' y reiniciar HA?", default=False):
+                    info("Editando usuario y reiniciando Home Assistant…")
+                    success(
+                        api.update_ha_user(
+                            username, new_name=new_name, is_admin=is_admin
+                        )
+                    )
+            elif op == "3":
                 username = ask("Usuario (login HA)").strip().lower()
                 if not username:
                     warning("Debe indicar un usuario.")
@@ -108,7 +157,7 @@ def menu_ha_users(api: HasControllerAPI) -> None:
                         continue
                     info("Aplicando cambio y reiniciando Home Assistant…")
                     success(api.change_ha_user_password(username, pwd))
-            elif op == "3":
+            elif op == "4":
                 info(
                     "Se creará usuario completo en .storage/auth "
                     "(con id UUID + credencial + contraseña)."
@@ -134,6 +183,76 @@ def menu_ha_users(api: HasControllerAPI) -> None:
                 ):
                     info("Creando usuario, persona y reiniciando Home Assistant…")
                     success(api.add_ha_user(username, pwd, is_admin=is_admin))
+            elif op == "5":
+                username = ask("Usuario a eliminar (login HA)").strip().lower()
+                if not username:
+                    warning("Debe indicar un usuario.")
+                    continue
+                target = next((u for u in status.users if u.username == username), None)
+                if not target:
+                    warning(f"'{username}' no aparece en el listado.")
+                    continue
+                if target.is_owner:
+                    error(
+                        "No se puede eliminar al usuario Owner. "
+                        "Solo nombre o contraseña."
+                    )
+                    continue
+                warning(
+                    f"Se eliminará '{username}' "
+                    f"(id={target.user_id or '—'}, persona vinculada si existe)."
+                )
+                if not confirm(f"¿ELIMINAR usuario '{username}'?", default=False):
+                    continue
+                typed = ask("Escriba ELIMINAR para confirmar").strip()
+                if typed != "ELIMINAR":
+                    info("Cancelado.")
+                    continue
+                warning("Home Assistant se reiniciará tras el borrado.")
+                if not confirm("¿Continuar con el reinicio de HA?", default=True):
+                    continue
+                info("Eliminando usuario y reiniciando Home Assistant…")
+                success(api.delete_ha_user(username))
+            elif op == "6":
+                username = ask("Usuario a designar como Owner").strip().lower()
+                if not username:
+                    warning("Debe indicar un usuario.")
+                    continue
+                target = next((u for u in status.users if u.username == username), None)
+                if not target:
+                    warning(f"'{username}' no aparece en el listado.")
+                    continue
+                if target.incomplete or not target.user_id:
+                    error(
+                        f"'{username}' está incompleto (sin id). "
+                        "No se puede designar Owner."
+                    )
+                    continue
+                if target.is_owner:
+                    info(f"'{username}' ya es el Owner.")
+                    continue
+                current_owners = [
+                    u.username for u in status.users if u.is_owner and u.username
+                ]
+                if current_owners:
+                    warning(
+                        f"Owner actual: {', '.join(current_owners)}. "
+                        "Se le quitará el flag is_owner (seguirá existiendo como Admin/Usuario)."
+                    )
+                else:
+                    warning("No hay Owner ahora; se designará uno.")
+                warning(
+                    f"'{username}' quedará como único Owner y administrador. "
+                    "Home Assistant se reiniciará."
+                )
+                if not confirm(f"¿Designar Owner a '{username}'?", default=False):
+                    continue
+                typed = ask("Escriba OWNER para confirmar").strip()
+                if typed != "OWNER":
+                    info("Cancelado.")
+                    continue
+                info("Designando Owner y reiniciando Home Assistant…")
+                success(api.set_ha_user_owner(username))
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -321,9 +440,10 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
             [
                 ("1", "Actualizar verificación"),
                 ("2", "Subir / instalar desde carpeta local"),
-                ("3", "Subir AWS credentials (1 vez)"),
-                ("4", "Eliminar plugin_service"),
-                ("5", "Reiniciar Home Assistant"),
+                ("3", "Descargar e instalar desde GitHub (Recomendado)"),
+                ("4", "Subir AWS credentials (1 vez)"),
+                ("5", "Eliminar plugin_service"),
+                ("6", "Reiniciar Home Assistant"),
                 ("0", "Volver"),
             ],
         )
@@ -357,6 +477,24 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
                     info("Reiniciando HA…")
                     success(api.restart_ha())
             elif op == "3":
+                if not status.parent_exists:
+                    error("No se puede instalar: falta custom_components/.")
+                    continue
+                if status.plugin_exists:
+                    warning("Ya existe plugin_service; se reemplazará por la versión de GitHub.")
+                    if not confirm("¿Reinstalar desde GitHub?", default=True):
+                        continue
+                
+                info("Descargando desde GitHub y subiendo al controlador (puede tardar)…")
+                try:
+                    success(api.install_plugin_service_from_github(replace=True))
+                    _offer_aws_credentials_if_missing(api, default_aws)
+                    if confirm("¿Desea reiniciar Home Assistant ahora para aplicar cambios?", default=True):
+                        info("Reiniciando HA…")
+                        success(api.restart_ha())
+                except Exception as exc:
+                    error(f"Error al descargar de GitHub: {exc}")
+            elif op == "4":
                 local = ask_confirmed_path(
                     "plugin_service_aws_credentials", default_aws
                 )
@@ -453,14 +591,14 @@ def menu_admin_network(api: HasControllerAPI) -> None:
             "Acciones",
             [
                 ("1", "Actualizar verificación"),
-                ("2", "Instalar TODO (host + integración HA + config entry)"),
+                ("2", "Instalar TODO (host + integración HA + config entry) - Instalación completa del administrador"),
                 ("3", "Instalar solo servicio host"),
                 ("4", "Instalar solo integración HA"),
                 ("5", "Mostrar API key (enmascarada / completa)"),
-                ("6", "Configurar integración en HA (inyectar API key)"),
-                ("7", "Reparar core.config_entries (KeyError discovery_keys)"),
-                ("8", "Diagnosticar WiFi (wlan unavailable)"),
-                ("9", "Reparar WiFi ahora"),
+                ("6", "Configurar integración en HA (inyectar API key) - Vincula el host con Home Assistant"),
+                ("7", "Reparar core.config_entries (KeyError discovery_keys) - Soluciona errores en la base de datos de HA"),
+                ("8", "Diagnosticar WiFi (wlan unavailable) - Verifica el estado de la radio y la interfaz"),
+                ("9", "Reparar WiFi ahora - Intenta recuperar la conexión inalámbrica"),
                 ("10", "Eliminar TODO (integración + servicio host)"),
                 ("11", "Eliminar solo servicio host"),
                 ("12", "Eliminar solo integración HA"),
@@ -797,20 +935,21 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
             "Acciones",
             [
                 ("1", "Actualizar verificación"),
-                ("2", "Eliminar bloque http legado (YAML)"),
-                ("3", "Aplicar trusted_proxies (.storage/http stable)"),
+                ("2", "Eliminar bloque http legado (YAML) - Quita config antigua de red/proxy en configuration.yaml"),
+                ("3", "Aplicar trusted_proxies (.storage/http stable) - Corrige error 400 al usar proxy o Cloudflare"),
                 ("4", "Reiniciar Home Assistant"),
                 (
                     "5",
-                    "Desactivar Discovery (escaneo de red)"
+                    "Desactivar Discovery (escaneo de red) - Detiene búsqueda automática de nuevos dispositivos"
                     if status.discovery_enabled
-                    else "Activar Discovery (escaneo de red)",
+                    else "Activar Discovery (escaneo de red) - Permite detectar nuevos dispositivos automáticamente",
                 ),
                 ("6", "Ver configuration.yaml"),
                 ("7", "Ver automations.yaml"),
-                ("8", "Validar sintaxis (hass check_config)"),
-                ("9", "Reparar includes (automation/script/scene)"),
-                ("10", "Eliminar YAML (submenú)"),
+                ("8", "Validar sintaxis (hass check_config) - Verifica errores en el YAML antes de reiniciar"),
+                ("9", "Reparar includes (automation/script/scene) - Asegura que los archivos externos estén vinculados"),
+                ("10", "Reparar registro HA (Fix KeyError discovery_keys) - Soluciona errores internos de la base de datos de HA"),
+                ("11", "Eliminar YAML (submenú)"),
                 ("0", "Volver"),
             ],
         )
@@ -862,7 +1001,7 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                         "Se reiniciará HA."
                     )
                     if confirm("¿Activar Discovery de nuevo?", default=False):
-                        info("Activando Discovery y reiniciando HA…")
+                        info("Activar Discovery de nuevo y reiniciar HA…")
                         success(api.set_ha_discovery(enabled=True, restart=True))
             elif op == "6":
                 info("Leyendo configuration.yaml…")
@@ -905,6 +1044,16 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                         info("Reiniciando HA…")
                         success(api.restart_ha())
             elif op == "10":
+                warning(
+                    "Esta reparación añade discovery_keys faltantes al registro de HA. "
+                    "Soluciona integraciones que no aparecen."
+                )
+                if confirm("¿Reparar registro de integraciones y reiniciar HA?", default=True):
+                    info("Reparando schema de core.config_entries…")
+                    success(api.repair_ha_config_entries())
+                    info("Reiniciando Home Assistant para aplicar cambios…")
+                    success(api.restart_ha())
+            elif op == "11":
                 _menu_delete_ha_yaml(api)
             else:
                 warning("Opción no válida.")
@@ -1002,7 +1151,8 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                 ("2", "Admin Network (administrador de Redes)"),
                 ("3", "Helper Manager (administrador de Auxiliares)"),
                 ("4", "Z-Wave JS UI (panel lateral :8091)"),
-                ("5", "Reiniciar Home Assistant"),
+                ("5", "Reparar registro HA (Fix KeyError discovery_keys)"),
+                ("6", "Reiniciar Home Assistant"),
                 ("", ""),
                 ("0", "Volver"),
             ],
@@ -1019,6 +1169,16 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
         elif op == "4":
             menu_zwave_panel(api)
         elif op == "5":
+            warning(
+                "Esta reparación añade discovery_keys faltantes al registro de HA. "
+                "Soluciona integraciones que no aparecen."
+            )
+            if confirm("¿Reparar registro de integraciones y reiniciar HA?", default=True):
+                info("Reparando schema de core.config_entries…")
+                success(api.repair_ha_config_entries())
+                info("Reiniciando Home Assistant para aplicar cambios…")
+                success(api.restart_ha())
+        elif op == "6":
             if confirm("¿Reiniciar Home Assistant?", default=False):
                 info("Reiniciando HA…")
                 success(api.restart_ha())
@@ -1031,7 +1191,7 @@ def menu_ha_admin(api: HasControllerAPI) -> None:
         menu_options(
             "Administrar Home Assistant",
             [
-                ("1", "Usuarios (crear / resetear contraseña)"),
+                ("1", "Usuarios (crear / editar / eliminar / Owner)"),
                 ("2", "Gestión de Espacios (backups, limpieza, disco)"),
                 ("3", "Configuración HTTP, Proxy y Discovery"),
                 ("4", "Gestor de Integraciones (energy, red, auxiliares, zwave)"),

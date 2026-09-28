@@ -294,6 +294,431 @@ for pu in prov_users:
             "Home Assistant reiniciado para aplicar el cambio."
         )
 
+    def update_user(
+        self,
+        username: str,
+        *,
+        new_name: str | None = None,
+        is_admin: bool | None = None,
+    ) -> str:
+        """Edita nombre y/o rol (Admin/Usuario). Owner: solo nombre."""
+        user = self._validate_username(username)
+        container = self._require_container()
+
+        existing = self.find_user(user)
+        if not existing:
+            raise ValidationError(f"El usuario '{user}' no existe.")
+        if existing.incomplete or not existing.user_id:
+            raise ValidationError(
+                f"El login '{user}' está incompleto (sin id). No se puede editar."
+            )
+        if new_name is None and is_admin is None:
+            raise ValidationError("Indique al menos un cambio: nombre o rol.")
+
+        name_to_set: str | None = None
+        if new_name is not None:
+            name_to_set = new_name.strip()
+            if not name_to_set:
+                raise ValidationError("El nombre no puede quedar vacío.")
+            if len(name_to_set) > 64:
+                raise ValidationError("El nombre no puede superar 64 caracteres.")
+
+        if is_admin is not None and existing.is_owner:
+            raise ValidationError(
+                "No se puede cambiar el rol del usuario Owner. "
+                "Solo se permite editar su nombre o contraseña."
+            )
+
+        payload = json.dumps(
+            {
+                "username": user,
+                "user_id": existing.user_id,
+                "new_name": name_to_set,
+                "is_admin": is_admin,
+            }
+        )
+        script = f"""
+import json, os
+req = json.loads({json.dumps(payload)})
+username = req["username"]
+user_id = req["user_id"]
+new_name = req.get("new_name")
+is_admin = req.get("is_admin")
+
+auth_path = "/config/.storage/auth"
+person_path = "/config/.storage/person"
+
+try:
+    with open(auth_path) as f:
+        auth = json.load(f)
+except Exception as exc:
+    print("ERR")
+    print(exc)
+    raise SystemExit(0)
+
+users = (auth.get("data") or {{}}).get("users") or []
+target = None
+for u in users:
+    if (u.get("id") or "").strip() == user_id:
+        target = u
+        break
+if target is None:
+    print("ERR")
+    print("user_id not found in auth")
+    raise SystemExit(0)
+
+if target.get("is_owner") and is_admin is not None:
+    print("ERR_OWNER")
+    print("cannot change owner role")
+    raise SystemExit(0)
+
+changed = []
+if new_name is not None:
+    target["name"] = new_name
+    changed.append("name")
+if is_admin is not None:
+    target["group_ids"] = ["system-admin"] if is_admin else ["system-users"]
+    changed.append("role")
+
+person = None
+person_changed = False
+if new_name is not None and os.path.isfile(person_path):
+    try:
+        with open(person_path) as f:
+            person = json.load(f)
+    except Exception:
+        person = None
+    if person is not None:
+        items = (person.get("data") or {{}}).get("items") or []
+        for it in items:
+            if it.get("user_id") == user_id:
+                it["name"] = new_name
+                person_changed = True
+                break
+
+def atomic_write(path, data):
+    tmp = path + ".tmp_horus"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\\n")
+    os.replace(tmp, path)
+
+try:
+    atomic_write(auth_path, auth)
+    if person is not None and person_changed:
+        atomic_write(person_path, person)
+except Exception as exc:
+    print("ERR")
+    print(exc)
+    raise SystemExit(0)
+
+print("OK")
+print(",".join(changed) if changed else "none")
+print("admin" if "system-admin" in (target.get("group_ids") or []) else "user")
+print(target.get("name") or "")
+"""
+        result = self.ssh.run(
+            f"docker exec {shlex.quote(container)} python3 -c {shlex.quote(script)}",
+            timeout=_AUTH_TIMEOUT,
+        )
+        lines = result.stdout.splitlines()
+        if not lines:
+            msg = result.stderr or "Sin respuesta al editar el usuario."
+            raise SSHCommandError(msg, exit_code=result.exit_code, stderr=result.stderr)
+        if lines[0] == "ERR_OWNER":
+            raise ValidationError("No se puede cambiar el rol del usuario Owner.")
+        if lines[0] != "OK":
+            detail = result.stderr or "\n".join(lines) or "Fallo al escribir .storage"
+            raise SSHCommandError(detail, exit_code=result.exit_code, stderr=result.stderr)
+
+        self._restart_homeassistant(container)
+
+        verified = self.find_user(user)
+        if not verified:
+            raise SSHCommandError(
+                f"Tras reiniciar HA, '{user}' no aparece. Revise .storage/auth.",
+                exit_code=1,
+                stderr="",
+            )
+        parts: list[str] = []
+        if name_to_set is not None:
+            parts.append(f"nombre='{verified.name}'")
+        if is_admin is not None:
+            role = "administrador" if verified.is_admin else "usuario estándar"
+            parts.append(f"rol={role}")
+        detail = ", ".join(parts) if parts else "sin cambios"
+        return (
+            f"Usuario '{user}' actualizado ({detail}). "
+            "Home Assistant reiniciado para aplicar el cambio."
+        )
+
+    def delete_user(self, username: str) -> str:
+        """Elimina usuario (auth + credenciales + password + persona). Bloquea Owner."""
+        user = self._validate_username(username)
+        container = self._require_container()
+
+        existing = self.find_user(user)
+        if not existing:
+            raise ValidationError(f"El usuario '{user}' no existe.")
+        if existing.is_owner:
+            raise ValidationError(
+                "No se puede eliminar al usuario Owner. "
+                "Es el propietario de la instancia Home Assistant."
+            )
+        if existing.incomplete and not existing.user_id:
+            # Solo entrada huérfana en auth_provider: limpiar password
+            payload = json.dumps({"username": user, "user_id": "", "orphan_only": True})
+        else:
+            if not existing.user_id:
+                raise ValidationError(
+                    f"El login '{user}' no tiene id. No se puede eliminar de forma segura."
+                )
+            payload = json.dumps(
+                {"username": user, "user_id": existing.user_id, "orphan_only": False}
+            )
+
+        script = f"""
+import json, os
+req = json.loads({json.dumps(payload)})
+username = req["username"]
+user_id = (req.get("user_id") or "").strip()
+orphan_only = bool(req.get("orphan_only"))
+
+auth_path = "/config/.storage/auth"
+prov_path = "/config/.storage/auth_provider.homeassistant"
+person_path = "/config/.storage/person"
+
+try:
+    with open(auth_path) as f:
+        auth = json.load(f)
+except Exception as exc:
+    print("ERR")
+    print(exc)
+    raise SystemExit(0)
+
+prov = None
+try:
+    with open(prov_path) as f:
+        prov = json.load(f)
+except Exception:
+    prov = None
+
+auth.setdefault("data", {{}})
+users = auth["data"].setdefault("users", [])
+creds = auth["data"].setdefault("credentials", [])
+
+if not orphan_only:
+    for u in users:
+        if (u.get("id") or "").strip() == user_id and u.get("is_owner"):
+            print("ERR_OWNER")
+            print("cannot delete owner")
+            raise SystemExit(0)
+    auth["data"]["users"] = [
+        u for u in users if (u.get("id") or "").strip() != user_id
+    ]
+    auth["data"]["credentials"] = [
+        c for c in creds
+        if not (
+            c.get("auth_provider_type") == "homeassistant"
+            and (
+                (c.get("user_id") or "").strip() == user_id
+                or ((c.get("data") or {{}}).get("username") or "").strip() == username
+            )
+        )
+    ]
+else:
+    auth["data"]["credentials"] = [
+        c for c in creds
+        if not (
+            c.get("auth_provider_type") == "homeassistant"
+            and ((c.get("data") or {{}}).get("username") or "").strip() == username
+        )
+    ]
+
+if prov is not None:
+    prov.setdefault("data", {{}})
+    prov_users = prov["data"].setdefault("users", [])
+    prov["data"]["users"] = [
+        pu for pu in prov_users
+        if (pu.get("username") or "").strip() != username
+    ]
+
+person = None
+if user_id and os.path.isfile(person_path):
+    try:
+        with open(person_path) as f:
+            person = json.load(f)
+    except Exception:
+        person = None
+    if person is not None:
+        person.setdefault("data", {{}})
+        items = person["data"].setdefault("items", [])
+        person["data"]["items"] = [
+            it for it in items if it.get("user_id") != user_id
+        ]
+
+def atomic_write(path, data):
+    tmp = path + ".tmp_horus"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\\n")
+    os.replace(tmp, path)
+
+try:
+    atomic_write(auth_path, auth)
+    if prov is not None:
+        atomic_write(prov_path, prov)
+    if person is not None:
+        atomic_write(person_path, person)
+except Exception as exc:
+    print("ERR")
+    print(exc)
+    raise SystemExit(0)
+
+print("OK")
+print(user_id or "orphan")
+"""
+        result = self.ssh.run(
+            f"docker exec {shlex.quote(container)} python3 -c {shlex.quote(script)}",
+            timeout=_AUTH_TIMEOUT,
+        )
+        lines = result.stdout.splitlines()
+        if not lines:
+            msg = result.stderr or "Sin respuesta al eliminar el usuario."
+            raise SSHCommandError(msg, exit_code=result.exit_code, stderr=result.stderr)
+        if lines[0] == "ERR_OWNER":
+            raise ValidationError("No se puede eliminar al usuario Owner.")
+        if lines[0] != "OK":
+            detail = result.stderr or "\n".join(lines) or "Fallo al escribir .storage"
+            raise SSHCommandError(detail, exit_code=result.exit_code, stderr=result.stderr)
+
+        self._restart_homeassistant(container)
+
+        still = self.find_user(user)
+        if still and not still.incomplete:
+            raise SSHCommandError(
+                f"Tras reiniciar HA, '{user}' sigue apareciendo. Revise .storage/auth.",
+                exit_code=1,
+                stderr="",
+            )
+        return (
+            f"Usuario '{user}' eliminado. "
+            "Home Assistant reiniciado para aplicar el cambio."
+        )
+
+    def set_owner(self, username: str) -> str:
+        """Designa un usuario como único Owner (is_owner + admin)."""
+        user = self._validate_username(username)
+        container = self._require_container()
+
+        existing = self.find_user(user)
+        if not existing:
+            raise ValidationError(f"El usuario '{user}' no existe.")
+        if existing.incomplete or not existing.user_id:
+            raise ValidationError(
+                f"El login '{user}' está incompleto (sin id). "
+                "No se puede designar Owner; elimínelo o créelo de nuevo."
+            )
+        if existing.is_owner:
+            return f"'{user}' ya es el Owner. No se requieren cambios."
+
+        previous_owners = [
+            u.username for u in self.list_users() if u.is_owner and u.username
+        ]
+
+        payload = json.dumps({"username": user, "user_id": existing.user_id})
+        script = f"""
+import json, os
+req = json.loads({json.dumps(payload)})
+username = req["username"]
+user_id = req["user_id"]
+
+auth_path = "/config/.storage/auth"
+try:
+    with open(auth_path) as f:
+        auth = json.load(f)
+except Exception as exc:
+    print("ERR")
+    print(exc)
+    raise SystemExit(0)
+
+users = (auth.get("data") or {{}}).get("users") or []
+found = False
+prev = []
+for u in users:
+    if u.get("system_generated"):
+        continue
+    uid = (u.get("id") or "").strip()
+    if uid == user_id:
+        u["is_owner"] = True
+        u["group_ids"] = ["system-admin"]
+        u["is_active"] = True
+        found = True
+    else:
+        if u.get("is_owner"):
+            prev.append(uid)
+        u["is_owner"] = False
+
+if not found:
+    print("ERR")
+    print("user_id not found in auth")
+    raise SystemExit(0)
+
+def atomic_write(path, data):
+    tmp = path + ".tmp_horus"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\\n")
+    os.replace(tmp, path)
+
+try:
+    atomic_write(auth_path, auth)
+except Exception as exc:
+    print("ERR")
+    print(exc)
+    raise SystemExit(0)
+
+print("OK")
+print(user_id)
+print(",".join(prev) if prev else "-")
+"""
+        result = self.ssh.run(
+            f"docker exec {shlex.quote(container)} python3 -c {shlex.quote(script)}",
+            timeout=_AUTH_TIMEOUT,
+        )
+        lines = result.stdout.splitlines()
+        if not lines:
+            msg = result.stderr or "Sin respuesta al designar Owner."
+            raise SSHCommandError(msg, exit_code=result.exit_code, stderr=result.stderr)
+        if lines[0] != "OK":
+            detail = result.stderr or "\n".join(lines) or "Fallo al escribir .storage"
+            raise SSHCommandError(detail, exit_code=result.exit_code, stderr=result.stderr)
+
+        self._restart_homeassistant(container)
+
+        owners = [u for u in self.list_users() if u.is_owner]
+        verified = self.find_user(user)
+        if not verified or not verified.is_owner:
+            raise SSHCommandError(
+                f"Tras reiniciar HA, '{user}' no quedó como Owner. "
+                "Revise .storage/auth.",
+                exit_code=1,
+                stderr="",
+            )
+        if len(owners) != 1:
+            raise SSHCommandError(
+                f"Se esperaba un solo Owner; hay {len(owners)}. Revise .storage/auth.",
+                exit_code=1,
+                stderr="",
+            )
+
+        prev_txt = ", ".join(previous_owners) if previous_owners else "(ninguno)"
+        return (
+            f"'{user}' es ahora el único Owner (también administrador). "
+            f"Owner anterior: {prev_txt}. "
+            "Home Assistant reiniciado para aplicar el cambio."
+        )
+
     def add_user(self, username: str, password: str, is_admin: bool = False) -> str:
         """Crea usuario + persona en .storage y reinicia HA para cargar auth."""
         user = self._validate_username(username)
