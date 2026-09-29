@@ -1,0 +1,392 @@
+"""Modelos de datos para respuestas de la API."""
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+from paths import (
+    REMOTE_CUSTOM_COMPONENTS,
+    REMOTE_CONFIGURATION_YAML,
+    REMOTE_PLUGIN_AWS_CREDENTIALS,
+)
+
+
+@dataclass
+class CommandResult:
+    stdout: str
+    stderr: str
+    exit_code: int
+
+    @property
+    def ok(self) -> bool:
+        return self.exit_code == 0
+
+
+@dataclass
+class NetworkDevice:
+    device: str
+    device_type: str
+    state: str
+    connection: str
+    mac: str = ""
+
+
+@dataclass
+class ConnectionProfile:
+    name: str
+    device: str
+    ipv4_method: str
+    ipv4_addresses: str
+    ipv4_gateway: str
+    ipv4_dns: str
+
+
+@dataclass
+class NetworkStatus:
+    devices: list[NetworkDevice] = field(default_factory=list)
+    default_gateway: str = ""
+    raw_device_status: str = ""
+    raw_ip_addr: str = ""
+
+
+@dataclass
+class WifiNetwork:
+    ssid: str
+    signal: str
+    security: str
+    in_use: bool
+
+
+@dataclass
+class HostnameInfo:
+    static_hostname: str
+    pretty_hostname: str
+    raw: str
+
+
+@dataclass
+class ZeroTierNetwork:
+    nwid: str
+    name: str
+    status: str
+    type: str
+    dev: str
+    ip: str
+
+
+@dataclass
+class ZeroTierStatus:
+    installed: bool
+    version: str = ""
+    service_active: bool = False
+    networks: list[ZeroTierNetwork] = field(default_factory=list)
+    raw: str = ""
+
+
+@dataclass
+class SessionInfo:
+    user: str
+    host: str
+    remote_user: str
+    has_sudo: bool
+
+
+@dataclass
+class CellularStatus:
+    is_active: bool
+    is_enabled: bool
+    has_modem: bool
+    modem_devices: list[str] = field(default_factory=list)
+
+
+@dataclass
+class HaUser:
+    """Usuario de Home Assistant (login en :8123)."""
+
+    user_id: str
+    username: str
+    name: str
+    is_owner: bool = False
+    is_active: bool = True
+    is_admin: bool = False
+    incomplete: bool = False  # sin id o solo en auth_provider
+
+
+@dataclass
+class HaUsersStatus:
+    """Estado de usuarios HA detectados en el controlador."""
+
+    container_name: str = ""
+    version: str = ""
+    config_path: str = ""
+    users: list[HaUser] = field(default_factory=list)
+    error: str = ""
+
+
+@dataclass
+class MqttDiagnosticStatus:
+    """Diagnóstico MQTT Z-Wave JS UI (runbook Horus)."""
+
+    store_path: str = ""
+    service_name: str = "zwave-ui.service"
+    settings_found: bool = False
+    mqtt_disabled: Optional[bool] = None  # True = MQTT deshabilitado en config
+    mqtt_host: str = ""
+    mqtt_port: int = 0
+    has_mqtt_log_errors: bool = False
+    mqtt_log_sample: list[str] = field(default_factory=list)
+    zwave_ui_process_running: bool = False
+    zwave_ui_service_active: bool = False
+    port_3000_open: bool = False
+    port_8091_open: bool = False
+    port_1883_open: bool = False
+    broker_probe: str = ""  # succeeded | refused | unknown
+    mosquitto_running: bool = False
+    ha_container_found: bool = False
+    ha_zwave_ws_url: str = ""
+    ha_mqtt_integration: str = ""
+    recommended_action: str = "review_manual"
+    action_detail: str = ""
+
+
+@dataclass
+class CloudflareStatus:
+    """Estado de cloudflared en el controlador."""
+
+    installed: bool
+    version: str = ""
+    running_tunnels: list[str] = field(default_factory=list)
+    error: str = ""
+    ha_proxy_ok: bool = False
+    ha_proxy_detail: str = ""
+
+
+@dataclass
+class PluginServiceStatus:
+    """Estado del custom component plugin_service en el controlador."""
+
+    parent_dir: str = REMOTE_CUSTOM_COMPONENTS
+    plugin_dir: str = f"{REMOTE_CUSTOM_COMPONENTS}/plugin_service"
+    parent_exists: bool = False
+    plugin_exists: bool = False
+    found_names: list[str] = field(default_factory=list)
+    components: list[str] = field(default_factory=list)
+    plugin_entries: list[str] = field(default_factory=list)
+    manifest_domain: str = ""
+    aws_credentials_path: str = REMOTE_PLUGIN_AWS_CREDENTIALS
+    aws_credentials_exists: bool = False
+    error: str = ""
+
+
+@dataclass
+class HaConfigurationStatus:
+    """Estado HTTP de HA: YAML legado + .storage/http (trusted_proxies)."""
+
+    path: str = REMOTE_CONFIGURATION_YAML
+    exists: bool = False
+    is_empty: bool = True
+    has_http_block: bool = False
+    has_use_x_forwarded_for: bool = False
+    has_trusted_proxy_ipv4: bool = False
+    has_trusted_proxy_ipv6: bool = False
+    has_all_cors_origins: bool = False
+    missing_cors_origins: list[str] = field(default_factory=list)
+    has_use_x_frame_options: bool = False
+    http_ok: bool = False
+    content_preview: str = ""
+    error: str = ""
+    ha_version: str = ""
+    config_dir: str = ""
+    storage_path: str = ""
+    storage_exists: bool = False
+    storage_use_x_forwarded_for: bool = False
+    storage_has_proxy_ipv4: bool = False
+    storage_has_proxy_ipv6: bool = False
+    storage_pending: bool = False
+    storage_yaml_migration_done: bool = False
+    storage_proxy_ok: bool = False
+    uses_storage_http: bool = False
+    proxy_ok: bool = False
+    discovery_enabled: bool = True
+    discovery_detail: str = ""
+    # Includes automation/script/scene (timeout UI si faltan)
+    has_automation_include: bool = False
+    has_script_include: bool = False
+    has_scene_include: bool = False
+    automations_file_exists: bool = False
+    scripts_file_exists: bool = False
+    scenes_file_exists: bool = False
+    yaml_includes_ok: bool = False
+    yaml_issues: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BackupEntry:
+    """Carpeta de backup detectada en el controlador."""
+
+    path: str
+    kind: str  # ha | zwave | other
+    size: str = ""
+    size_bytes: int = 0
+    date_label: str = ""
+
+
+@dataclass
+class MaintenanceStatus:
+    """Estado de limpieza y optimización del controlador."""
+    apt_cache_size: str = ""
+    npm_cache_size: str = ""
+    journal_size: str = ""
+    nested_config_detected: bool = False
+    old_archives: list[str] = field(default_factory=list)
+    ha_db_size_mb: float = 0.0
+    ha_db_alert: bool = False
+    custom_components: list[str] = field(default_factory=list)
+    last_cleanup_summary: str = ""
+    error: str = ""
+
+@dataclass
+class SystemHealthStatus:
+    """Disco, memoria y unidades systemd fallidas."""
+
+    disk: str = ""
+    memory: str = ""
+    uptime: str = ""
+    failed_units: str = ""
+    has_failed: bool = False
+    error: str = ""
+
+
+@dataclass
+class BackupManagerStatus:
+    """Estado de disco y backups del controlador."""
+
+    root_free: str = ""
+    root_used_pct: str = ""
+    root_avail_bytes: int = 0
+    docker_summary: str = ""
+    backups: list[BackupEntry] = field(default_factory=list)
+    ha_config_path: str = ""
+    zwave_store_path: str = ""
+    low_space: bool = False
+    error: str = ""
+
+
+@dataclass
+class HaIntegrationStatus:
+    """Estado de un custom component en /config/custom_components."""
+
+    domain: str
+    parent_dir: str = REMOTE_CUSTOM_COMPONENTS
+    component_dir: str = ""
+    parent_exists: bool = False
+    component_exists: bool = False
+    components: list[str] = field(default_factory=list)
+    entries: list[str] = field(default_factory=list)
+    manifest_domain: str = ""
+    manifest_version: str = ""
+    error: str = ""
+
+
+@dataclass
+class AdminNetworkHostStatus:
+    """Estado del servicio host admin_network (systemd + API :8765)."""
+
+    install_dir: str = "/opt/admin_network"
+    env_file: str = "/etc/admin_network.env"
+    service_name: str = "admin_network"
+    dir_exists: bool = False
+    env_exists: bool = False
+    service_active: bool = False
+    service_enabled: bool = False
+    health_ok: bool = False
+    health_detail: str = ""
+    api_key: str = ""
+    port: int = 8765
+    wifi_watchdog_active: bool = False
+    wifi_watchdog_enabled: bool = False
+    error: str = ""
+
+
+@dataclass
+class WifiDiagnoseStatus:
+    """Diagnóstico WiFi remoto (nmcli / rfkill / unavailable)."""
+
+    radio: str = ""
+    radio_enabled: bool = False
+    devices_raw: str = ""
+    unavailable: list[str] = field(default_factory=list)
+    healthy: bool = False
+    detail: str = ""
+    error: str = ""
+
+
+@dataclass
+class AdminNetworkInstallStatus:
+    """Estado combinado: servicio host + integración HA."""
+
+    ha: HaIntegrationStatus
+    host: AdminNetworkHostStatus
+    ha_entry_configured: bool = False
+    ha_entry_detail: str = ""
+
+
+@dataclass
+class DebianRepairStatus:
+    """Diagnóstico APT/venv en BND Debian 11 (bullseye)."""
+
+    is_debian11: bool = False
+    os_id: str = ""
+    version_id: str = ""
+    version_codename: str = ""
+    arch: str = ""
+    python_version: str = ""
+    python39_version: str = ""
+    venv_works: bool = False
+    has_archive_mirror: bool = False
+    has_security_mirror: bool = False
+    sources_preview: str = ""
+    needs_repair: bool = False
+    detail: str = ""
+    error: str = ""
+
+
+@dataclass
+class ZwavePanelStatus:
+    """Estado del panel lateral Z-Wave JS UI (www + panel_custom)."""
+
+    config_dir: str = ""
+    js_path: str = ""
+    yaml_path: str = ""
+    js_exists: bool = False
+    yaml_exists: bool = False
+    yaml_ok: bool = False
+    has_iframe_zwave: bool = False
+    installed: bool = False
+    error: str = ""
+
+
+@dataclass
+class SelfHealStatus:
+    """Diagnóstico HA / Z-Wave para autoreparación segura."""
+
+    ha_container: str = ""
+    ha_running: bool = False
+    ha_port_8123_ok: bool = False
+    ha_cpu_percent: float = -1.0
+    ha_cpu_high: bool = False
+    disk_free_pct: float = -1.0
+    disk_low: bool = False
+    log_discovery_keys_error: bool = False
+    log_db_corrupt: bool = False
+    log_zwave_ws_error: bool = False
+    log_sample: list[str] = field(default_factory=list)
+    zwave_service_name: str = ""
+    zwave_service_active: bool = False
+    zwave_process_running: bool = False
+    port_3000_open: bool = False
+    ha_zwave_ws_url: str = ""
+    zwave_ws_url_ok: bool = False
+    severity: str = "ok"  # ok | s0 | s1 | s2 | s3 | s4
+    recommended_action: str = "none"
+    action_detail: str = ""
+    error: str = ""
