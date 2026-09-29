@@ -337,6 +337,9 @@ class HasControllerAPI:
     def set_ha_discovery(self, enabled: bool, restart: bool = True) -> str:
         return self.ha_config.set_discovery(enabled=enabled, restart=restart)
 
+    def restore_ha_core_integrations(self, restart: bool = True) -> str:
+        return self.ha_config.restore_core_integrations(restart=restart)
+
     def restart_ha(self) -> str:
         return self.ha_config.restart_ha()
 

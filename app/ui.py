@@ -1089,6 +1089,9 @@ def panel_ha_configuration(status: HaConfigurationStatus) -> None:
         body.append("DESACTIVADO\n", style="success")
     if status.discovery_detail:
         body.append(f"  {status.discovery_detail}\n", style="dim")
+    _flag("Integraciones core (history, logbook…)", not status.core_missing, "FALTAN")
+    if status.core_missing:
+        body.append(f"  Faltan: {', '.join(status.core_missing)}\n", style="bold yellow")
 
     body.append("\nIncludes YAML: ", style="info")
     body.append(

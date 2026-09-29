@@ -208,6 +208,8 @@ class HaConfigurationStatus:
     proxy_ok: bool = False
     discovery_enabled: bool = True
     discovery_detail: str = ""
+    # Integraciones core de default_config ausentes (history, logbook, energy…)
+    core_missing: list[str] = field(default_factory=list)
     # Includes automation/script/scene (timeout UI si faltan)
     has_automation_include: bool = False
     has_script_include: bool = False

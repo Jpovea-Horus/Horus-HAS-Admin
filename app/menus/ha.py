@@ -921,6 +921,11 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
             )
         else:
             success("Discovery desactivado: no se escanean dispositivos nuevos en red.")
+        if status.core_missing:
+            warning(
+                "Faltan integraciones core (Historial, Logbook, Energía…): "
+                "no aparecen en HA. Use opción 5 en el Gestor de Integraciones."
+            )
         if status.yaml_includes_ok:
             success("Includes automation/script/scene OK.")
         else:
@@ -1144,6 +1149,20 @@ def menu_ha_spaces(api: HasControllerAPI) -> None:
 
 def menu_ha_integrations(api: HasControllerAPI) -> None:
     while True:
+        try:
+            status = api.get_ha_configuration_status()
+        except HasApiError as exc:
+            error(str(exc))
+            break
+
+        section("Gestor de Integraciones")
+
+        if status.core_missing:
+            warning(
+                "Faltan integraciones core (Historial, Logbook, Energía…): "
+                "no aparecen en HA. Use opción 5 para restaurarlas sin Discovery."
+            )
+
         menu_options(
             "Gestor de Integraciones",
             [
@@ -1151,8 +1170,9 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                 ("2", "Admin Network (administrador de Redes)"),
                 ("3", "Helper Manager (administrador de Auxiliares)"),
                 ("4", "Z-Wave JS UI (panel lateral :8091)"),
-                ("5", "Reparar registro HA (Fix KeyError discovery_keys)"),
-                ("6", "Reiniciar Home Assistant"),
+                ("5", "Restaurar integraciones core sin Discovery - Recupera Historial, Logbook, Energía y Backup"),
+                ("6", "Reparar registro HA (Fix KeyError discovery_keys)"),
+                ("7", "Reiniciar Home Assistant"),
                 ("", ""),
                 ("0", "Volver"),
             ],
@@ -1160,30 +1180,47 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
         op = ask("Opción")
         if op == "0":
             break
-        if op == "1":
-            menu_plugin_service(api)
-        elif op == "2":
-            menu_admin_network(api)
-        elif op == "3":
-            menu_helper_manager(api)
-        elif op == "4":
-            menu_zwave_panel(api)
-        elif op == "5":
-            warning(
-                "Esta reparación añade discovery_keys faltantes al registro de HA. "
-                "Soluciona integraciones que no aparecen."
-            )
-            if confirm("¿Reparar registro de integraciones y reiniciar HA?", default=True):
-                info("Reparando schema de core.config_entries…")
-                success(api.repair_ha_config_entries())
-                info("Reiniciando Home Assistant para aplicar cambios…")
-                success(api.restart_ha())
-        elif op == "6":
-            if confirm("¿Reiniciar Home Assistant?", default=False):
-                info("Reiniciando HA…")
-                success(api.restart_ha())
-        else:
-            warning("Opción no válida.")
+        try:
+            if op == "1":
+                menu_plugin_service(api)
+            elif op == "2":
+                menu_admin_network(api)
+            elif op == "3":
+                menu_helper_manager(api)
+            elif op == "4":
+                menu_zwave_panel(api)
+            elif op == "5":
+                if not status.core_missing:
+                    info("Las integraciones core ya están cargadas. No se requieren cambios.")
+                    continue
+                warning(
+                    f"Se añadirán: {', '.join(status.core_missing)} "
+                    "(sin dhcp/ssdp/zeroconf/usb/bluetooth). "
+                    "Backup .bak.horus.core y reinicio de HA."
+                )
+                if confirm("¿Restaurar integraciones core y reiniciar HA?", default=True):
+                    info("Escribiendo configuration.yaml y reiniciando HA…")
+                    success(api.restore_ha_core_integrations(restart=True))
+            elif op == "6":
+                warning(
+                    "Esta reparación añade discovery_keys faltantes al registro de HA. "
+                    "Soluciona integraciones que no aparecen."
+                )
+                if confirm("¿Reparar registro de integraciones y reiniciar HA?", default=True):
+                    info("Reparando schema de core.config_entries…")
+                    success(api.repair_ha_config_entries())
+                    info("Reiniciando Home Assistant para aplicar cambios…")
+                    success(api.restart_ha())
+            elif op == "7":
+                if confirm("¿Reiniciar Home Assistant?", default=False):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+            else:
+                warning("Opción no válida.")
+        except ValidationError as exc:
+            error(str(exc))
+        except HasApiError as exc:
+            error(str(exc))
 
 
 def menu_ha_admin(api: HasControllerAPI) -> None:

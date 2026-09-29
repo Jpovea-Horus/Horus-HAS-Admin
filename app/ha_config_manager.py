@@ -34,6 +34,7 @@ _DISCOVERY_COMPONENTS = frozenset({"dhcp", "ssdp", "zeroconf", "usb", "bluetooth
 # default_config (core) sin los de discovery — lista alineada con manifest HA.
 _DEFAULT_CONFIG_NO_DISCOVERY = (
     "assist_pipeline",
+    "backup",
     "cloud",
     "conversation",
     "energy",
@@ -45,6 +46,7 @@ _DEFAULT_CONFIG_NO_DISCOVERY = (
     "media_source",
     "mobile_app",
     "my",
+    "recorder",
     "stream",
     "sun",
     "usage_prediction",
@@ -61,6 +63,7 @@ _DISCOVERY_OFF_BLOCK = (
 )
 
 _DEFAULT_CONFIG_RE = re.compile(r"(?m)^default_config:\s*(?:#.*)?$")
+_DEFAULT_CONFIG_COMMENTED_RE = re.compile(r"(?m)^#\s*default_config:.*\n?")
 _DISCOVERY_OFF_RE = re.compile(
     rf"(?ms)^{re.escape(_DISCOVERY_OFF_START)}.*?^{re.escape(_DISCOVERY_OFF_END)}\s*\n?"
 )
@@ -963,6 +966,57 @@ print(str(removed))
             msg = f"{msg} {self.restart_ha()}"
         return msg
 
+    def restore_core_integrations(self, restart: bool = True) -> str:
+        """Carga history/logbook/energy/backup… sin reactivar el escaneo de red."""
+        status = self.get_status()
+        path = status.path or CONFIG_YAML_PATH
+
+        if not status.exists or status.is_empty:
+            raise SSHCommandError(
+                f"No hay configuration.yaml usable en {path}. "
+                "Aplique primero la plantilla base o configure HA."
+            )
+        if not status.core_missing:
+            return "Integraciones core ya cargadas (history, logbook, energy…). Sin cambios."
+
+        raw = self.ssh.run(f"cat {shlex.quote(path)}").stdout
+        if not raw.strip():
+            raise SSHCommandError(f"configuration.yaml vacío: {path}")
+        new_content = self._insert_core_block(raw)
+
+        backup_path = self._backup_remote(path, ".bak.horus.core")
+        self._write_remote_file(path, new_content)
+        verify = self.get_status()
+        if verify.core_missing:
+            raise SSHCommandError(
+                "Se escribió el YAML pero siguen faltando: "
+                f"{', '.join(verify.core_missing)}. Revise {path} (backup: {backup_path})."
+            )
+
+        msg = (
+            f"Integraciones core restauradas ({', '.join(status.core_missing)}) "
+            f"sin Discovery. Backup: {backup_path}."
+        )
+        if restart:
+            msg = f"{msg} {self.restart_ha()}"
+        return msg
+
+    @staticmethod
+    def _insert_core_block(raw: str) -> str:
+        block = _DISCOVERY_OFF_BLOCK.rstrip("\n") + "\n"
+        if _DISCOVERY_OFF_RE.search(raw):
+            return _DISCOVERY_OFF_RE.sub(lambda _m: block, raw, count=1)
+        if _DEFAULT_CONFIG_COMMENTED_RE.search(raw):
+            return _DEFAULT_CONFIG_COMMENTED_RE.sub(lambda _m: block, raw, count=1)
+        lines = raw.splitlines(keepends=True)
+        insert_at = len(lines)
+        for i, line in enumerate(lines):
+            if line.strip() and not line.lstrip().startswith("#"):
+                insert_at = i
+                break
+        lines.insert(insert_at, block + "\n")
+        return "".join(lines)
+
     @staticmethod
     def _fill_discovery_status(status: HaConfigurationStatus, content: str) -> None:
         has_default = bool(_DEFAULT_CONFIG_RE.search(content))
@@ -988,6 +1042,13 @@ print(str(removed))
             else:
                 status.discovery_enabled = False
                 status.discovery_detail = "Sin default_config ni componentes de discovery"
+
+        if not has_default:
+            status.core_missing = [
+                name
+                for name in _DEFAULT_CONFIG_NO_DISCOVERY
+                if not re.search(rf"(?m)^{name}:", content)
+            ]
 
     def _fill_includes_status(
         self, status: HaConfigurationStatus, content: str, config_dir: str
@@ -1102,6 +1163,8 @@ print(str(removed))
             return _DISCOVERY_OFF_RE.sub("default_config:\n", raw, count=1)
         if _DEFAULT_CONFIG_RE.search(raw):
             return raw
+        if _DEFAULT_CONFIG_COMMENTED_RE.search(raw):
+            return _DEFAULT_CONFIG_COMMENTED_RE.sub("default_config:\n", raw, count=1)
         # Sin bloque Horus ni default_config: insertar al inicio útil.
         lines = raw.splitlines(keepends=True)
         insert_at = 0
