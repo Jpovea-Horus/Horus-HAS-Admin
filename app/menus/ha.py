@@ -1,4 +1,4 @@
-"""Menús Home Assistant: usuarios, backups, plugin, config."""
+"""Menús Home Assistant: usuarios, plugin, integraciones, config."""
 
 from __future__ import annotations
 
@@ -7,21 +7,16 @@ from exceptions import HasApiError, ValidationError
 from ui import (
     ask,
     ask_confirmed_path,
-    ask_int,
     ask_password,
     confirm,
-    console,
     error,
     info,
     menu_options,
-    panel_backup_manager,
     panel_ha_configuration,
     panel_ha_users,
     panel_helper_manager,
     panel_hostname,
-    panel_maintenance,
     panel_plugin_service,
-    panel_process_snapshot,
     panel_admin_network,
     panel_yaml_content,
     panel_zwave_panel,
@@ -69,11 +64,12 @@ def menu_ha_users(api: HasControllerAPI) -> None:
             "Acciones",
             [
                 ("1", "Actualizar listado"),
-                ("2", "Editar usuario (nombre / rol)"),
-                ("3", "Cambiar / resetear contraseña"),
-                ("4", "Crear usuario"),
-                ("5", "Eliminar usuario"),
+                ("2", "Crear usuario"),
+                ("3", "Editar usuario (nombre / rol)"),
+                ("4", "Ocultar / mostrar en Personas"),
+                ("5", "Cambiar / resetear contraseña"),
                 ("6", "Designar Owner"),
+                ("7", "Eliminar usuario"),
                 ("0", "Volver"),
             ],
         )
@@ -83,7 +79,33 @@ def menu_ha_users(api: HasControllerAPI) -> None:
         try:
             if op == "1":
                 continue
-            if op == "2":
+            elif op == "2":
+                info(
+                    "Se creará usuario completo en .storage/auth "
+                    "(con id UUID + credencial + contraseña)."
+                )
+                username = ask("Nuevo usuario (minúsculas)").strip().lower()
+                if not username:
+                    warning("Debe indicar un usuario.")
+                    continue
+                pwd = ask_password("Contraseña")
+                pwd2 = ask_password("Confirmar contraseña")
+                if pwd != pwd2:
+                    error("Las contraseñas no coinciden.")
+                    continue
+                is_admin = confirm("¿Usuario administrador?", default=False)
+                role_txt = "administrador" if is_admin else "estándar"
+                warning(
+                    "Home Assistant se reiniciará unos segundos para cargar el usuario "
+                    "(sin reinicio el login no funciona)."
+                )
+                if confirm(
+                    f"¿Crear usuario '{username}' como {role_txt} y reiniciar HA?",
+                    default=False,
+                ):
+                    info("Creando usuario, persona y reiniciando Home Assistant…")
+                    success(api.add_ha_user(username, pwd, is_admin=is_admin))
+            elif op == "3":
                 username = ask("Usuario (login HA)").strip().lower()
                 if not username:
                     warning("Debe indicar un usuario.")
@@ -129,7 +151,37 @@ def menu_ha_users(api: HasControllerAPI) -> None:
                             username, new_name=new_name, is_admin=is_admin
                         )
                     )
-            elif op == "3":
+            elif op == "4":
+                username = ask("Usuario (login HA)").strip().lower()
+                if not username:
+                    warning("Debe indicar un usuario.")
+                    continue
+                target = next((u for u in status.users if u.username == username), None)
+                if not target:
+                    warning(f"'{username}' no aparece en el listado.")
+                    continue
+                if target.incomplete or not target.user_id:
+                    error(
+                        f"'{username}' está incompleto (sin id). "
+                        "No se puede ocultar ni mostrar."
+                    )
+                    continue
+                visible = not target.in_people
+                if visible:
+                    info(f"'{username}' está oculto; se volverá a crear su persona.")
+                    question = f"¿Mostrar '{username}' en Personas y reiniciar HA?"
+                else:
+                    warning(
+                        f"Se quitará la persona de '{username}' (Ajustes → Personas). "
+                        "El login sigue funcionando, pero se pierde la entidad person.* "
+                        "(presencia, rastreadores y foto)."
+                    )
+                    question = f"¿Ocultar '{username}' de Personas y reiniciar HA?"
+                if not confirm(question, default=False):
+                    continue
+                info("Aplicando cambio y reiniciando Home Assistant…")
+                success(api.set_ha_user_people_visibility(username, visible))
+            elif op == "5":
                 username = ask("Usuario (login HA)").strip().lower()
                 if not username:
                     warning("Debe indicar un usuario.")
@@ -157,62 +209,6 @@ def menu_ha_users(api: HasControllerAPI) -> None:
                         continue
                     info("Aplicando cambio y reiniciando Home Assistant…")
                     success(api.change_ha_user_password(username, pwd))
-            elif op == "4":
-                info(
-                    "Se creará usuario completo en .storage/auth "
-                    "(con id UUID + credencial + contraseña)."
-                )
-                username = ask("Nuevo usuario (minúsculas)").strip().lower()
-                if not username:
-                    warning("Debe indicar un usuario.")
-                    continue
-                pwd = ask_password("Contraseña")
-                pwd2 = ask_password("Confirmar contraseña")
-                if pwd != pwd2:
-                    error("Las contraseñas no coinciden.")
-                    continue
-                is_admin = confirm("¿Usuario administrador?", default=False)
-                role_txt = "administrador" if is_admin else "estándar"
-                warning(
-                    "Home Assistant se reiniciará unos segundos para cargar el usuario "
-                    "(sin reinicio el login no funciona)."
-                )
-                if confirm(
-                    f"¿Crear usuario '{username}' como {role_txt} y reiniciar HA?",
-                    default=False,
-                ):
-                    info("Creando usuario, persona y reiniciando Home Assistant…")
-                    success(api.add_ha_user(username, pwd, is_admin=is_admin))
-            elif op == "5":
-                username = ask("Usuario a eliminar (login HA)").strip().lower()
-                if not username:
-                    warning("Debe indicar un usuario.")
-                    continue
-                target = next((u for u in status.users if u.username == username), None)
-                if not target:
-                    warning(f"'{username}' no aparece en el listado.")
-                    continue
-                if target.is_owner:
-                    error(
-                        "No se puede eliminar al usuario Owner. "
-                        "Solo nombre o contraseña."
-                    )
-                    continue
-                warning(
-                    f"Se eliminará '{username}' "
-                    f"(id={target.user_id or '—'}, persona vinculada si existe)."
-                )
-                if not confirm(f"¿ELIMINAR usuario '{username}'?", default=False):
-                    continue
-                typed = ask("Escriba ELIMINAR para confirmar").strip()
-                if typed != "ELIMINAR":
-                    info("Cancelado.")
-                    continue
-                warning("Home Assistant se reiniciará tras el borrado.")
-                if not confirm("¿Continuar con el reinicio de HA?", default=True):
-                    continue
-                info("Eliminando usuario y reiniciando Home Assistant…")
-                success(api.delete_ha_user(username))
             elif op == "6":
                 username = ask("Usuario a designar como Owner").strip().lower()
                 if not username:
@@ -253,153 +249,36 @@ def menu_ha_users(api: HasControllerAPI) -> None:
                     continue
                 info("Designando Owner y reiniciando Home Assistant…")
                 success(api.set_ha_user_owner(username))
-            else:
-                warning("Opción no válida.")
-        except ValidationError as exc:
-            error(str(exc))
-        except HasApiError as exc:
-            error(str(exc))
-
-
-def menu_maintenance(api: HasControllerAPI) -> None:
-    summary = ""
-    while True:
-        section("Mantenimiento y Limpieza")
-        try:
-            status = api.get_maintenance_status()
-            if summary:
-                status.last_cleanup_summary = summary
-        except HasApiError as exc:
-            error(str(exc))
-            break
-
-        panel_maintenance(status)
-        opts = [
-            ("1", "Actualizar estado"),
-            ("2", "Limpieza sistemática segura (APT, NPM, Logs, Docker prune)"),
-            ("0", "Volver"),
-        ]
-        if status.nested_config_detected:
-            opts.insert(2, ("3", "Eliminar carpeta anidada basura (/config/config/)"))
-        if status.old_archives:
-            opts.insert(len(opts) - 1, ("4", "Eliminar archivos .zip/.tar.gz antiguos (>30 días)"))
-        if status.custom_components:
-            opts.insert(len(opts) - 1, ("5", "Eliminar carpeta en custom_components (limpieza)"))
-
-        menu_options("Acciones de Mantenimiento", opts)
-        op = ask("Opción")
-        if op == "0":
-            break
-        try:
-            if op == "1":
-                summary = ""
-                continue
-            if op == "2":
-                info("Ejecutando limpieza sistemática (esto puede tardar unos segundos)...")
-                summary = api.safe_cleanup()
-                success("Limpieza completada.")
-            elif op == "3" and status.nested_config_detected:
-                if confirm("¿Eliminar carpeta /home/cat/config/config/ ?", default=False):
-                    summary = api.delete_nested_config()
-                    success(summary)
-            elif op == "4" and status.old_archives:
-                if confirm(f"¿Eliminar {len(status.old_archives)} archivos antiguos?", default=False):
-                    summary = api.delete_old_archives()
-                    success(summary)
-            elif op == "5" and status.custom_components:
-                info("Carpetas en custom_components:")
-                for cc in status.custom_components:
-                    console.print(f"  • [bold]{cc}[/bold]")
-                name = ask("Nombre de la carpeta a eliminar (vacío para cancelar)").strip()
-                if not name:
+            elif op == "7":
+                username = ask("Usuario a eliminar (login HA)").strip().lower()
+                if not username:
+                    warning("Debe indicar un usuario.")
+                    continue
+                target = next((u for u in status.users if u.username == username), None)
+                if not target:
+                    warning(f"'{username}' no aparece en el listado.")
+                    continue
+                if target.is_owner:
+                    error(
+                        "No se puede eliminar al usuario Owner. "
+                        "Solo nombre o contraseña."
+                    )
+                    continue
+                warning(
+                    f"Se eliminará '{username}' "
+                    f"(id={target.user_id or '—'}, persona vinculada si existe)."
+                )
+                if not confirm(f"¿ELIMINAR usuario '{username}'?", default=False):
+                    continue
+                typed = ask("Escriba ELIMINAR para confirmar").strip()
+                if typed != "ELIMINAR":
                     info("Cancelado.")
                     continue
-                if name not in status.custom_components:
-                    error(f"'{name}' no es una carpeta válida en custom_components.")
+                warning("Home Assistant se reiniciará tras el borrado.")
+                if not confirm("¿Continuar con el reinicio de HA?", default=True):
                     continue
-                if confirm(f"¿ELIMINAR PERMANENTEMENTE '{name}'?", default=False):
-                    info(f"Eliminando '{name}'...")
-                    summary = api.delete_custom_component(name)
-                    success(summary)
-            else:
-                warning("Opción no válida.")
-        except HasApiError as exc:
-            error(str(exc))
-            summary = f"Error: {exc}"
-
-
-def menu_backup_manager(api: HasControllerAPI) -> None:
-    while True:
-        section("Gestión de backups")
-        try:
-            status = api.get_backup_status()
-        except HasApiError as exc:
-            error(str(exc))
-            break
-
-        panel_backup_manager(status)
-        menu_options(
-            "Acciones",
-            [
-                ("1", "Actualizar listado / espacio"),
-                ("2", "Crear backup HA + Z-Wave"),
-                ("3", "Crear solo backup HA"),
-                ("4", "Crear solo backup Z-Wave"),
-                ("5", "Eliminar backup (por #)"),
-                ("6", "Limpiar antiguos (mantener N más recientes)"),
-                ("7", "Liberar espacio Docker (prune -a)"),
-                ("0", "Volver"),
-            ],
-        )
-        op = ask("Opción")
-        if op == "0":
-            break
-        try:
-            if op == "1":
-                continue
-            if op == "2":
-                if status.low_space:
-                    warning("Poco espacio libre; el backup puede fallar o llenar el disco.")
-                if confirm("¿Crear backups HA + Z-Wave ahora?", default=True):
-                    info("Creando backups…")
-                    success(api.backup_before_update())
-            elif op == "3":
-                if confirm("¿Crear backup de config HA?", default=True):
-                    success(api.backup_ha_config())
-            elif op == "4":
-                if confirm("¿Crear backup del store Z-Wave?", default=True):
-                    success(api.backup_zwave_store())
-            elif op == "5":
-                if not status.backups:
-                    info("No hay backups para eliminar.")
-                    continue
-                idx = ask_int("Número de backup a eliminar")
-                if idx is None or idx < 1 or idx > len(status.backups):
-                    warning("Número fuera de rango.")
-                    continue
-                target = status.backups[idx - 1]
-                warning(f"Se eliminará: {target.path} ({target.size})")
-                if confirm("¿Eliminar este backup de forma permanente?", default=False):
-                    success(api.delete_backup(target.path))
-            elif op == "6":
-                keep = ask_int("¿Cuántos backups recientes conservar por tipo?", default="2")
-                if keep is None or keep < 0:
-                    warning("Número inválido.")
-                    continue
-                warning(
-                    f"Se eliminarán backups antiguos dejando los {keep} más recientes "
-                    "de HA y de Z-Wave."
-                )
-                if confirm("¿Continuar con la limpieza?", default=False):
-                    success(api.cleanup_old_backups(keep=keep))
-            elif op == "7":
-                warning(
-                    "docker system prune -a -f elimina imágenes y contenedores no usados. "
-                    "La imagen actual de HA en uso se conserva; capas huérfanas se borran."
-                )
-                if confirm("¿Ejecutar Docker prune ahora?", default=False):
-                    info("Ejecutando docker system prune…")
-                    success(api.docker_prune())
+                info("Eliminando usuario y reiniciando Home Assistant…")
+                success(api.delete_ha_user(username))
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -520,7 +399,7 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
                     replace = False
                 info("Subiendo AWS credentials…")
                 success(api.ensure_plugin_aws_credentials(local, replace=replace))
-            elif op == "4":
+            elif op == "5":
                 if not status.plugin_exists:
                     info("No hay nada que eliminar.")
                     continue
@@ -528,7 +407,7 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
                 if confirm("¿Eliminar plugin_service del controlador?", default=False):
                     info("Eliminando…")
                     success(api.remove_plugin_service())
-            elif op == "5":
+            elif op == "6":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
                     info("Reiniciando HA…")
                     success(api.restart_ha())
@@ -923,8 +802,10 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
             success("Discovery desactivado: no se escanean dispositivos nuevos en red.")
         if status.core_missing:
             warning(
-                "Faltan integraciones core (Historial, Logbook, Energía…): "
-                "no aparecen en HA. Use opción 5 en el Gestor de Integraciones."
+                f"Faltan integraciones core ({', '.join(status.core_missing)}). "
+                "Restáurelas en Home Assistant → Gestor de "
+                "Integraciones → 'Restaurar integraciones core' (no use la opción 5 "
+                "de este menú: esa activa Discovery)."
             )
         if status.yaml_includes_ok:
             success("Includes automation/script/scene OK.")
@@ -943,6 +824,7 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                 ("2", "Eliminar bloque http legado (YAML) - Quita config antigua de red/proxy en configuration.yaml"),
                 ("3", "Aplicar trusted_proxies (.storage/http stable) - Corrige error 400 al usar proxy o Cloudflare"),
                 ("4", "Reiniciar Home Assistant"),
+                ("", ""),
                 (
                     "5",
                     "Desactivar Discovery (escaneo de red) - Detiene búsqueda automática de nuevos dispositivos"
@@ -954,6 +836,7 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                 ("8", "Validar sintaxis (hass check_config) - Verifica errores en el YAML antes de reiniciar"),
                 ("9", "Reparar includes (automation/script/scene) - Asegura que los archivos externos estén vinculados"),
                 ("10", "Reparar registro HA (Fix KeyError discovery_keys) - Soluciona errores internos de la base de datos de HA"),
+                ("", ""),
                 ("11", "Eliminar YAML (submenú)"),
                 ("0", "Volver"),
             ],
@@ -1125,28 +1008,6 @@ def _menu_delete_ha_yaml(api: HasControllerAPI) -> None:
             error(str(exc))
 
 
-def menu_ha_spaces(api: HasControllerAPI) -> None:
-    while True:
-        menu_options(
-            "Gestión de Espacios",
-            [
-                ("1", "Gestión de backups / espacio en disco"),
-                ("2", "Mantenimiento y limpieza sistemática"),
-                ("", ""),
-                ("0", "Volver"),
-            ],
-        )
-        op = ask("Opción")
-        if op == "0":
-            break
-        if op == "1":
-            menu_backup_manager(api)
-        elif op == "2":
-            menu_maintenance(api)
-        else:
-            warning("Opción no válida.")
-
-
 def menu_ha_integrations(api: HasControllerAPI) -> None:
     while True:
         try:
@@ -1170,8 +1031,10 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                 ("2", "Admin Network (administrador de Redes)"),
                 ("3", "Helper Manager (administrador de Auxiliares)"),
                 ("4", "Z-Wave JS UI (panel lateral :8091)"),
+                ("", ""),
                 ("5", "Restaurar integraciones core sin Discovery - Recupera Historial, Logbook, Energía y Backup"),
                 ("6", "Reparar registro HA (Fix KeyError discovery_keys)"),
+                ("", ""),
                 ("7", "Reiniciar Home Assistant"),
                 ("", ""),
                 ("0", "Volver"),
@@ -1225,15 +1088,15 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
 
 def menu_ha_admin(api: HasControllerAPI) -> None:
     while True:
+        section("Home Assistant")
         menu_options(
             "Administrar Home Assistant",
             [
-                ("1", "Usuarios (crear / editar / eliminar / Owner)"),
-                ("2", "Gestión de Espacios (backups, limpieza, disco)"),
-                ("3", "Configuración HTTP, Proxy y Discovery"),
-                ("4", "Gestor de Integraciones (energy, red, auxiliares, zwave)"),
+                ("1", "Usuarios (crear / editar / eliminar / Owner / Personas)"),
+                ("2", "Configuración HTTP, Proxy y Discovery"),
+                ("3", "Gestor de Integraciones (energy, red, auxiliares, zwave)"),
                 ("", ""),
-                ("0", "Volver"),
+                ("0", "Volver al menú principal"),
             ],
         )
         op = ask("Opción")
@@ -1242,32 +1105,8 @@ def menu_ha_admin(api: HasControllerAPI) -> None:
         if op == "1":
             menu_ha_users(api)
         elif op == "2":
-            menu_ha_spaces(api)
-        elif op == "3":
             menu_ha_configuration(api)
-        elif op == "4":
+        elif op == "3":
             menu_ha_integrations(api)
-        else:
-            warning("Opción no válida.")
-
-
-def menu_administrative(api: HasControllerAPI) -> None:
-    while True:
-        section("Configuración administrativa")
-        menu_options(
-            "Administrativa",
-            [
-                ("1", "Configurar hostname"),
-                ("2", "Administrar Home Assistant"),
-                ("0", "Volver al menú principal"),
-            ],
-        )
-        op = ask("Opción")
-        if op == "0":
-            break
-        if op == "1":
-            menu_hostname(api)
-        elif op == "2":
-            menu_ha_admin(api)
         else:
             warning("Opción no válida.")

@@ -25,6 +25,7 @@ def menu_review_diagnostics(api: HasControllerAPI) -> None:
             [
                 ("1", "HTOP / monitor de procesos"),
                 ("2", "Salud del sistema (disco, memoria, unidades fallidas)"),
+                ("", ""),
                 ("0", "Volver al menú principal"),
             ],
         )
@@ -38,6 +39,7 @@ def menu_review_diagnostics(api: HasControllerAPI) -> None:
                     [
                         ("1", "Abrir htop/top interactivo (salir con q)"),
                         ("2", "Snapshot de procesos (top)"),
+                        ("", ""),
                         ("0", "Volver"),
                     ],
                 )

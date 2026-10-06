@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import paramiko
 
@@ -216,6 +216,10 @@ class SSHClient:
     @property
     def use_cloudflare(self) -> bool:
         return self._use_cloudflare
+
+    @property
+    def is_root(self) -> bool:
+        return self._is_root
 
     def connect(
         self,
@@ -503,6 +507,47 @@ class SSHClient:
         finally:
             sftp.close()
         return uploaded
+
+    def download_file(
+        self,
+        remote_path: str,
+        local_path: str,
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """Descarga un archivo por SFTP a un `.part` y lo renombra al terminar."""
+        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = f"{local_path}.part"
+        sftp = self.open_sftp()
+        try:
+            sftp.get(remote_path, tmp_path, callback=progress)
+        except Exception as exc:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise SSHCommandError(f"Fallo al descargar {remote_path}: {exc}") from exc
+        finally:
+            sftp.close()
+        os.replace(tmp_path, local_path)
+        return os.path.getsize(local_path)
+
+    def upload_file(
+        self,
+        local_path: str,
+        remote_path: str,
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """Sube un archivo por SFTP. Devuelve bytes subidos."""
+        if not os.path.isfile(local_path):
+            raise SSHCommandError(f"Archivo local no encontrado: {local_path}")
+        sftp = self.open_sftp()
+        try:
+            attrs = sftp.put(local_path, remote_path, callback=progress, confirm=True)
+        except Exception as exc:
+            raise SSHCommandError(f"Fallo al subir {local_path}: {exc}") from exc
+        finally:
+            sftp.close()
+        return int(attrs.st_size or 0)
 
     @staticmethod
     def _sftp_makedirs(sftp: paramiko.SFTPClient, remote_path: str) -> None:

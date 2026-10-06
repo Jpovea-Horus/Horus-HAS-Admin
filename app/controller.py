@@ -26,6 +26,7 @@ from plugin_service_manager import PluginServiceManager
 from ha_integration_manager import HaIntegrationManager
 from admin_network_host_manager import AdminNetworkHostManager
 from debian_repair_manager import DebianRepairManager
+from remote_backup_manager import RemoteBackupManager
 from self_heal_manager import SelfHealManager
 from zwave_panel_manager import ZwavePanelManager
 from models import (
@@ -37,6 +38,10 @@ from models import (
     HaUser,
     HaUsersStatus,
     HostnameInfo,
+    HorusArchive,
+    HorusArchiveInfo,
+    HorusBackupStatus,
+    HorusJobResult,
     MaintenanceStatus,
     MqttDiagnosticStatus,
     NetworkStatus,
@@ -77,6 +82,7 @@ class HasControllerAPI:
         self.self_heal = SelfHealManager(self.ssh, self.ha_config)
         self.cloudflare = CloudflareManager(self.ssh)
         self.backups = BackupManager(self.ssh)
+        self.horus_backup = RemoteBackupManager(self.ssh, self.ha_config, self.self_heal)
         self.maintenance = MaintenanceManager(self.ssh)
         self._session: Optional[SessionInfo] = None
 
@@ -139,6 +145,9 @@ class HasControllerAPI:
 
     def set_ha_user_owner(self, username: str) -> str:
         return self.ha_users.set_owner(username)
+
+    def set_ha_user_people_visibility(self, username: str, visible: bool) -> str:
+        return self.ha_users.set_people_visibility(username, visible)
 
     def add_ha_user(self, username: str, password: str, is_admin: bool = False) -> str:
         return self.ha_users.add_user(username, password, is_admin=is_admin)
@@ -450,6 +459,78 @@ class HasControllerAPI:
 
     def cleanup_old_backups(self, keep: int = 2, kind: str = "all") -> str:
         return self.backups.cleanup_keep_recent(keep=keep, kind=kind)
+
+    def docker_prune(self) -> str:
+        return self.backups.docker_prune()
+
+    def get_horus_backup_status(self) -> HorusBackupStatus:
+        return self.horus_backup.get_status()
+
+    def create_horus_backup(self, on_phase=None) -> HorusJobResult:
+        return self.horus_backup.create_archive(on_phase=on_phase)
+
+    def download_horus_backup(
+        self, remote_path: str, expected_sha: str = "", progress=None
+    ) -> tuple[str, str]:
+        return self.horus_backup.download_archive(
+            remote_path, expected_sha=expected_sha, progress=progress
+        )
+
+    def delete_remote_horus_backup(self, remote_path: str) -> str:
+        return self.horus_backup.delete_remote_archive(remote_path)
+
+    def prune_remote_horus_backups(self, keep: int = 1) -> list[str]:
+        return self.horus_backup.prune_remote(keep=keep)
+
+    def list_local_horus_backups(self) -> list[HorusArchive]:
+        return self.horus_backup.list_local_archives()
+
+    def prune_local_horus_backups(self, device_id: str, keep: int) -> list[str]:
+        return self.horus_backup.prune_local(device_id, keep)
+
+    def inspect_horus_backup(self, local_path: str) -> HorusArchiveInfo:
+        return self.horus_backup.inspect_local_archive(local_path)
+
+    def restore_horus_backup(
+        self,
+        info: HorusArchiveInfo,
+        restore_ha: bool = True,
+        restore_zwave: bool = True,
+        keep_db: bool = True,
+        progress=None,
+        on_phase=None,
+    ) -> HorusJobResult:
+        return self.horus_backup.restore(
+            info,
+            restore_ha=restore_ha,
+            restore_zwave=restore_zwave,
+            keep_db=keep_db,
+            progress=progress,
+            on_phase=on_phase,
+        )
+
+    def factory_reset_horus(
+        self, reset_ha: bool = True, reset_zwave: bool = True, on_phase=None
+    ) -> HorusJobResult:
+        return self.horus_backup.factory_reset(
+            reset_ha=reset_ha, reset_zwave=reset_zwave, on_phase=on_phase
+        )
+
+    def revert_horus_snapshot(self, stamp: str, on_phase=None) -> HorusJobResult:
+        return self.horus_backup.revert_snapshot(stamp, on_phase=on_phase)
+
+    def delete_horus_snapshots(self, stamp: str) -> str:
+        return self.horus_backup.delete_snapshots(stamp)
+
+    def wait_services_healthy(
+        self, need_ha: bool = True, need_zwave: bool = True, on_tick=None
+    ) -> tuple[bool, bool]:
+        return self.horus_backup.wait_healthy(
+            need_ha=need_ha, need_zwave=need_zwave, on_tick=on_tick
+        )
+
+    def reboot_controller(self) -> str:
+        return self.horus_backup.reboot()
 
     def ping(self, host: str = "8.8.8.8") -> str:
         return self.network.ping(host)

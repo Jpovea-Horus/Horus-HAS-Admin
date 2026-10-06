@@ -45,7 +45,10 @@ class MaintenanceManager:
         status.nested_config_detected = check.stdout.strip() == "YES"
 
         # 5. Old archives (>30 days)
-        res = self.ssh.run("find /home/cat /root -maxdepth 2 -name '*.zip' -o -name '*.tar.gz' -mtime +30 2>/dev/null")
+        res = self.ssh.run(
+            "find /home/cat /root -maxdepth 2 \\( -name '*.zip' -o -name '*.tar.gz' \\) "
+            "-mtime +30 -not -path '*/horus_backups/*' 2>/dev/null"
+        )
         status.old_archives = [l.strip() for l in res.stdout.splitlines() if l.strip()]
 
         # 6. HA DB size

@@ -177,6 +177,14 @@ def get_cloudflared_exe():
     
     return "cloudflared" # Rely on PATH
 
+def get_local_backups_dir() -> str:
+    """Carpeta local de backups HORUS (override con HAS_BACKUPS_DIR)."""
+    env_dir = (os.environ.get("HAS_BACKUPS_DIR") or "").strip()
+    if env_dir:
+        return env_dir
+    return os.path.join(os.path.expanduser("~"), "Documents", "Backups_Horus")
+
+
 # Rutas Remotas (Base configurable)
 REMOTE_BASE_PATH = "/home/cat"
 
@@ -192,3 +200,4 @@ REMOTE_PLUGIN_AWS_CREDENTIALS = f"{REMOTE_CONFIG_DIR}/plugin_service_aws_credent
 REMOTE_ZWAVE_STORE = get_remote_path("zwave-js-ui-store")
 REMOTE_COMPOSE_DIR = REMOTE_BASE_PATH
 REMOTE_COMPOSE_FILE = f"{REMOTE_COMPOSE_DIR}/docker-compose.yml"
+REMOTE_HORUS_BACKUPS_DIR = "/root/horus_backups"

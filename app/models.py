@@ -109,6 +109,7 @@ class HaUser:
     is_active: bool = True
     is_admin: bool = False
     incomplete: bool = False  # sin id o solo en auth_provider
+    in_people: bool = False  # tiene persona vinculada en .storage/person
 
 
 @dataclass
@@ -271,6 +272,98 @@ class BackupManagerStatus:
     zwave_store_path: str = ""
     low_space: bool = False
     error: str = ""
+
+
+@dataclass
+class HorusArchive:
+    """Backup ligero .tar.gz (estándar HORUS), remoto o local."""
+
+    path: str
+    name: str
+    device_id: str = ""
+    stamp: str = ""  # YYYYmmdd_HHMM
+    size_bytes: int = 0
+    sha256: str = ""
+    location: str = "remote"  # remote | local
+    legacy: bool = False  # formato guía manual (home/cat/...) sin manifest
+
+    @property
+    def size_human(self) -> str:
+        n = float(self.size_bytes)
+        for unit in ("B", "KB", "MB", "GB"):
+            if n < 1024 or unit == "GB":
+                return f"{n:.1f} {unit}" if unit != "B" else f"{int(n)} B"
+            n /= 1024.0
+        return f"{n:.1f} GB"
+
+
+@dataclass
+class HorusArchiveInfo:
+    """Contenido validado de un .tar.gz local antes de restaurar."""
+
+    path: str
+    name: str
+    legacy: bool = False
+    device_id: str = ""
+    hostname: str = ""
+    created: str = ""
+    ha_version: str = ""
+    src_config: str = ""  # ruta relativa dentro del tar ("" = no incluido)
+    src_store: str = ""
+    nvm_member: str = ""
+    total_bytes: int = 0
+    sha256: str = ""
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class HorusSnapshot:
+    """Carpeta apartada por un restore/reset (permite revertir)."""
+
+    path: str
+    kind: str  # ha | zwave
+    reason: str  # pre_restore | pre_reset
+    stamp: str
+    target: str  # carpeta original a la que pertenece
+
+
+@dataclass
+class HorusBackupStatus:
+    """Preflight del backup remoto estándar HORUS."""
+
+    device_id: str = ""
+    hostname: str = ""
+    ha_container: str = ""
+    ha_running: bool = False
+    ha_version: str = ""
+    zwave_service: str = ""
+    zwave_active: bool = False
+    config_path: str = ""
+    store_path: str = ""
+    config_exists: bool = False
+    store_exists: bool = False
+    estimated_bytes: int = 0
+    free_bytes: int = 0
+    enough_space: bool = True
+    nvm_latest: str = ""
+    nvm_age_days: float = -1.0
+    remote_archives: list[HorusArchive] = field(default_factory=list)
+    snapshots: list[HorusSnapshot] = field(default_factory=list)
+    error: str = ""
+
+
+@dataclass
+class HorusJobResult:
+    """Resultado de un trabajo remoto desacoplado (backup/restore/reset)."""
+
+    ok: bool
+    status: str = ""  # OK | FAIL | TIMEOUT
+    detail: str = ""
+    archive_path: str = ""
+    sha256: str = ""
+    size_bytes: int = 0
+    downtime_s: int = 0
+    log_tail: str = ""
 
 
 @dataclass

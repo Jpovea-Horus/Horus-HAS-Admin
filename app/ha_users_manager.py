@@ -107,6 +107,9 @@ class HaUsersManager:
             msg = stop.stderr or stop.stdout or "No se pudo reiniciar Home Assistant."
             raise SSHCommandError(msg, exit_code=stop.exit_code, stderr=stop.stderr)
 
+        self._wait_homeassistant(container)
+
+    def _wait_homeassistant(self, container: str) -> None:
         # Esperar a que el proceso acepte conexiones (auth ya en memoria)
         self.ssh.run(
             f"for i in $(seq 1 {_RESTART_WAIT_SEC}); do "
@@ -115,6 +118,45 @@ class HaUsersManager:
             timeout=_AUTH_TIMEOUT,
         )
         self.ssh.run("sleep 8", timeout=20)
+
+    def _host_auth_path(self) -> str:
+        """Ruta de .storage/auth en el host (necesaria para editar con HA parado)."""
+        config = self._detect_config_path()
+        if not config.startswith("/"):
+            return ""
+        path = f"{config}/.storage/auth"
+        check = self.ssh.run(f"test -f {shlex.quote(path)} && echo OK", use_sudo=True)
+        return path if check.stdout.strip() == "OK" else ""
+
+    def _run_with_ha_stopped(self, container: str, script: str) -> list[str]:
+        """Para HA, ejecuta el script en el host y vuelve a arrancar HA.
+
+        Con HA encendido, al apagarse vuelca su auth en memoria sobre
+        .storage/auth y puede deshacer la edición.
+        """
+        stop = self.ssh.run(f"docker stop {shlex.quote(container)}", timeout=_AUTH_TIMEOUT)
+        if not stop.ok:
+            msg = stop.stderr or stop.stdout or "No se pudo detener Home Assistant."
+            raise SSHCommandError(msg, exit_code=stop.exit_code, stderr=stop.stderr)
+
+        result = self.ssh.run(
+            f"python3 -c {shlex.quote(script)}", timeout=_AUTH_TIMEOUT, use_sudo=True
+        )
+        start = self.ssh.run(f"docker start {shlex.quote(container)}", timeout=_AUTH_TIMEOUT)
+        if not start.ok:
+            msg = start.stderr or start.stdout or "No se pudo arrancar Home Assistant."
+            raise SSHCommandError(
+                f"{msg} (ejecute 'docker start {container}' manualmente)",
+                exit_code=start.exit_code,
+                stderr=start.stderr,
+            )
+        self._wait_homeassistant(container)
+
+        lines = result.stdout.splitlines()
+        if not lines:
+            msg = result.stderr or "Sin respuesta del script en el host."
+            raise SSHCommandError(msg, exit_code=result.exit_code, stderr=result.stderr)
+        return lines
 
     def get_status(self) -> HaUsersStatus:
         status = HaUsersStatus()
@@ -167,6 +209,16 @@ try:
 except Exception:
     pass
 
+person_uids = set()
+try:
+    with open("/config/.storage/person") as f:
+        person = json.load(f)
+    for it in (person.get("data") or {}).get("items") or []:
+        if it.get("user_id"):
+            person_uids.add(it["user_id"])
+except Exception:
+    pass
+
 users = (auth.get("data") or {}).get("users") or []
 creds = (auth.get("data") or {}).get("credentials") or []
 by_id = {}
@@ -200,12 +252,13 @@ for u in users:
         "1" if is_active else "0",
         "1" if is_admin else "0",
         incomplete,
+        "1" if uid in person_uids else "0",
     ]))
 
 for pu in prov_users:
     uname = (pu.get("username") or "").strip()
     if uname and uname not in usernames_linked:
-        print("\t".join(["", uname, "(solo password, sin id)", "0", "1", "0", "1"]))
+        print("\t".join(["", uname, "(solo password, sin id)", "0", "1", "0", "1", "0"]))
 """
         result = self.ssh.run(
             f"docker exec {shlex.quote(container)} python3 -c {shlex.quote(script)}",
@@ -238,6 +291,7 @@ for pu in prov_users:
                     is_active=parts[4] == "1",
                     is_admin=parts[5] == "1",
                     incomplete=parts[6] == "1",
+                    in_people=len(parts) > 7 and parts[7] == "1",
                 )
             )
         return users
@@ -606,6 +660,126 @@ print(user_id or "orphan")
             "Home Assistant reiniciado para aplicar el cambio."
         )
 
+    def set_people_visibility(self, username: str, visible: bool) -> str:
+        """Oculta/muestra el usuario en Ajustes → Personas (el login no cambia)."""
+        user = self._validate_username(username)
+        container = self._require_container()
+
+        existing = self.find_user(user)
+        if not existing:
+            raise ValidationError(f"El usuario '{user}' no existe.")
+        if existing.incomplete or not existing.user_id:
+            raise ValidationError(
+                f"El login '{user}' está incompleto (sin id). No se puede modificar."
+            )
+        if existing.in_people == visible:
+            estado = "visible" if visible else "oculto"
+            return f"'{user}' ya está {estado} en Personas. No se requieren cambios."
+
+        payload = json.dumps(
+            {
+                "username": user,
+                "user_id": existing.user_id,
+                "name": existing.name or user,
+                "visible": bool(visible),
+            }
+        )
+        script = f"""
+import json, os, re
+req = json.loads({json.dumps(payload)})
+username = req["username"]
+user_id = req["user_id"]
+name = req["name"]
+visible = bool(req["visible"])
+
+person_path = "/config/.storage/person"
+person = None
+if os.path.isfile(person_path):
+    try:
+        with open(person_path) as f:
+            person = json.load(f)
+    except Exception as exc:
+        print("ERR")
+        print(exc)
+        raise SystemExit(0)
+if person is None:
+    person = {{
+        "version": 2,
+        "minor_version": 1,
+        "key": "person",
+        "data": {{"items": []}},
+    }}
+person.setdefault("data", {{}})
+items = person["data"].setdefault("items", [])
+
+if visible:
+    if any(it.get("user_id") == user_id for it in items):
+        print("OK")
+        print("none")
+        raise SystemExit(0)
+    slug = re.sub(r"[^a-z0-9_]+", "_", username)[:32] or user_id[:8]
+    existing_ids = {{(it.get("id") or "") for it in items}}
+    base_slug = slug
+    n = 1
+    while slug in existing_ids:
+        slug = f"{{base_slug}}_{{n}}"
+        n += 1
+    items.append({{
+        "id": slug,
+        "name": name,
+        "user_id": user_id,
+        "device_trackers": [],
+        "picture": None,
+    }})
+else:
+    person["data"]["items"] = [it for it in items if it.get("user_id") != user_id]
+
+tmp = person_path + ".tmp_horus"
+try:
+    with open(tmp, "w") as f:
+        json.dump(person, f, indent=2)
+        f.write("\\n")
+    os.replace(tmp, person_path)
+except Exception as exc:
+    print("ERR")
+    print(exc)
+    raise SystemExit(0)
+
+print("OK")
+print("shown" if visible else "hidden")
+"""
+        result = self.ssh.run(
+            f"docker exec {shlex.quote(container)} python3 -c {shlex.quote(script)}",
+            timeout=_AUTH_TIMEOUT,
+        )
+        lines = result.stdout.splitlines()
+        if not lines:
+            msg = result.stderr or "Sin respuesta al modificar Personas."
+            raise SSHCommandError(msg, exit_code=result.exit_code, stderr=result.stderr)
+        if lines[0] != "OK":
+            detail = result.stderr or "\n".join(lines) or "Fallo al escribir .storage/person"
+            raise SSHCommandError(detail, exit_code=result.exit_code, stderr=result.stderr)
+
+        self._restart_homeassistant(container)
+
+        verified = self.find_user(user)
+        if not verified or verified.in_people != visible:
+            raise SSHCommandError(
+                f"Tras reiniciar HA, la visibilidad de '{user}' en Personas no cambió. "
+                "Revise .storage/person.",
+                exit_code=1,
+                stderr="",
+            )
+        if visible:
+            return (
+                f"'{user}' vuelve a aparecer en Ajustes → Personas. "
+                "Home Assistant reiniciado para aplicar el cambio."
+            )
+        return (
+            f"'{user}' oculto de Ajustes → Personas (el login sigue funcionando). "
+            "Home Assistant reiniciado para aplicar el cambio."
+        )
+
     def set_owner(self, username: str) -> str:
         """Designa un usuario como único Owner (is_owner + admin)."""
         user = self._validate_username(username)
@@ -626,14 +800,21 @@ print(user_id or "orphan")
             u.username for u in self.list_users() if u.is_owner and u.username
         ]
 
-        payload = json.dumps({"username": user, "user_id": existing.user_id})
+        host_auth = self._host_auth_path()
+        payload = json.dumps(
+            {
+                "username": user,
+                "user_id": existing.user_id,
+                "auth_path": host_auth or "/config/.storage/auth",
+            }
+        )
         script = f"""
 import json, os
 req = json.loads({json.dumps(payload)})
 username = req["username"]
 user_id = req["user_id"]
 
-auth_path = "/config/.storage/auth"
+auth_path = req["auth_path"]
 try:
     with open(auth_path) as f:
         auth = json.load(f)
@@ -665,10 +846,13 @@ if not found:
     raise SystemExit(0)
 
 def atomic_write(path, data):
+    st = os.stat(path)
     tmp = path + ".tmp_horus"
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
         f.write("\\n")
+    os.chown(tmp, st.st_uid, st.st_gid)
+    os.chmod(tmp, st.st_mode & 0o777)
     os.replace(tmp, path)
 
 try:
@@ -682,19 +866,24 @@ print("OK")
 print(user_id)
 print(",".join(prev) if prev else "-")
 """
-        result = self.ssh.run(
-            f"docker exec {shlex.quote(container)} python3 -c {shlex.quote(script)}",
-            timeout=_AUTH_TIMEOUT,
-        )
-        lines = result.stdout.splitlines()
-        if not lines:
-            msg = result.stderr or "Sin respuesta al designar Owner."
-            raise SSHCommandError(msg, exit_code=result.exit_code, stderr=result.stderr)
-        if lines[0] != "OK":
-            detail = result.stderr or "\n".join(lines) or "Fallo al escribir .storage"
-            raise SSHCommandError(detail, exit_code=result.exit_code, stderr=result.stderr)
-
-        self._restart_homeassistant(container)
+        if host_auth:
+            lines = self._run_with_ha_stopped(container, script)
+            if lines[0] != "OK":
+                detail = "\n".join(lines) or "Fallo al escribir .storage/auth"
+                raise SSHCommandError(detail, exit_code=1, stderr="")
+        else:
+            result = self.ssh.run(
+                f"docker exec {shlex.quote(container)} python3 -c {shlex.quote(script)}",
+                timeout=_AUTH_TIMEOUT,
+            )
+            lines = result.stdout.splitlines()
+            if not lines:
+                msg = result.stderr or "Sin respuesta al designar Owner."
+                raise SSHCommandError(msg, exit_code=result.exit_code, stderr=result.stderr)
+            if lines[0] != "OK":
+                detail = result.stderr or "\n".join(lines) or "Fallo al escribir .storage"
+                raise SSHCommandError(detail, exit_code=result.exit_code, stderr=result.stderr)
+            self._restart_homeassistant(container)
 
         owners = [u for u in self.list_users() if u.is_owner]
         verified = self.find_user(user)

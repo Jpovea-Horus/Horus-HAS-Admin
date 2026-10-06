@@ -29,6 +29,9 @@ from models import (
     HaIntegrationStatus,
     HaUser,
     HaUsersStatus,
+    HorusArchive,
+    HorusBackupStatus,
+    HorusSnapshot,
     MaintenanceStatus,
     MqttDiagnosticStatus,
     PluginServiceStatus,
@@ -157,8 +160,9 @@ def table_ha_users(users: list[HaUser]) -> None:
     t.add_column("ID")
     t.add_column("Rol")
     t.add_column("Estado")
+    t.add_column("Personas")
     if not users:
-        t.add_row("-", "(ninguno)", "", "", "", "")
+        t.add_row("-", "(ninguno)", "", "", "", "", "")
     else:
         for i, u in enumerate(users, 1):
             if u.is_owner:
@@ -180,6 +184,7 @@ def table_ha_users(users: list[HaUser]) -> None:
                 id_txt,
                 role,
                 estado,
+                "Visible" if u.in_people else "Oculto",
             )
     console.print(t)
 
@@ -1284,6 +1289,99 @@ def panel_backup_manager(status: BackupManagerStatus) -> None:
             t.add_row(str(i), kind, b.date_label or "-", b.size or "-", b.path)
 
     console.print(t)
+
+
+def panel_horus_backup(status: HorusBackupStatus) -> None:
+    """Preflight del backup remoto HORUS + backups en el controlador."""
+    warn = bool(status.error) or not status.enough_space
+    body = Text()
+    body.append("BACKUP REMOTO HORUS\n", style="bold underline")
+    body.append("-------------------\n")
+
+    def _row(label: str, value: str, style: str = "success") -> None:
+        body.append(f"{label}: ", style="info")
+        body.append(f"{value}\n", style=style)
+
+    _row("Equipo", f"{status.device_id or '-'}  ({status.hostname or '-'})")
+    ha_state = "en marcha" if status.ha_running else "detenido"
+    _row(
+        "Home Assistant",
+        f"{status.ha_container or 'no detectado'} · {ha_state} · v{status.ha_version or '?'}",
+        "success" if status.ha_running else "warning",
+    )
+    _row(
+        "Z-Wave JS UI",
+        f"{status.zwave_service or '-'} · {'activo' if status.zwave_active else 'inactivo'}",
+        "success" if status.zwave_active else "warning",
+    )
+    _row("Config HA", status.config_path if status.config_exists else f"{status.config_path} (no existe)",
+         "dim" if status.config_exists else "error")
+    _row("Store Z-Wave", status.store_path if status.store_exists else f"{status.store_path} (no existe)",
+         "dim" if status.store_exists else "error")
+
+    est = HorusArchive(path="", name="", size_bytes=status.estimated_bytes).size_human
+    free = HorusArchive(path="", name="", size_bytes=status.free_bytes).size_human
+    _row("Tamaño a empaquetar (sin DB)", f"~{est}  ·  libre {free}",
+         "success" if status.enough_space else "error")
+
+    if status.nvm_latest:
+        age = status.nvm_age_days
+        style = "success" if 0 <= age <= 30 else "warning"
+        _row("Respaldo NVM antena", f"{status.nvm_latest.rsplit('/', 1)[-1]} (hace {age:g} días)", style)
+    else:
+        _row("Respaldo NVM antena", "no encontrado", "warning")
+        body.append(
+            "  ⚠ Sin .bin de la antena: si cambia el hardware habrá que re-emparejar.\n"
+            "    Genérelo en Z-Wave JS UI › Configuración › Backup NVM (o programe backups NVM).\n",
+            style="warning",
+        )
+
+    if status.snapshots:
+        stamps = sorted({s.stamp for s in status.snapshots}, reverse=True)
+        body.append(f"\nCopias apartadas (revertibles): {len(stamps)}\n", style="warning")
+    if status.error:
+        body.append(f"\n{status.error}\n", style="bold red")
+
+    console.print(Panel(body, border_style="red" if warn else "cyan", box=box.ROUNDED, padding=(1, 2)))
+    table_horus_archives(status.remote_archives, title="Backups .tar.gz en el controlador")
+
+
+def table_horus_archives(archives: list[HorusArchive], title: str) -> None:
+    t = Table(title=title, box=box.ROUNDED, header_style="bold cyan", border_style="cyan")
+    t.add_column("#", style="dim", width=3)
+    t.add_column("Equipo", width=8)
+    t.add_column("Fecha", width=16)
+    t.add_column("Tamaño", justify="right", width=10)
+    t.add_column("Archivo")
+    if not archives:
+        t.add_row("-", "-", "-", "-", "(ninguno)")
+    for i, a in enumerate(archives, 1):
+        s = a.stamp
+        date = f"{s[0:4]}-{s[4:6]}-{s[6:8]} {s[9:11]}:{s[11:13]}" if len(s) == 13 else s
+        name = a.name + ("  [guía manual]" if a.legacy else "")
+        t.add_row(str(i), a.device_id or "?", date, a.size_human, name)
+    console.print(t)
+
+
+def table_horus_snapshots(snapshots: list[HorusSnapshot]) -> list[str]:
+    """Muestra copias apartadas agrupadas por sello. Devuelve los sellos en orden."""
+    stamps = sorted({s.stamp for s in snapshots}, reverse=True)
+    t = Table(title="Copias apartadas por restore/reset", box=box.ROUNDED,
+              header_style="bold cyan", border_style="yellow")
+    t.add_column("#", style="dim", width=3)
+    t.add_column("Fecha", width=19)
+    t.add_column("Motivo", width=12)
+    t.add_column("Incluye")
+    if not stamps:
+        t.add_row("-", "-", "-", "(ninguna)")
+    for i, stamp in enumerate(stamps, 1):
+        group = [s for s in snapshots if s.stamp == stamp]
+        reason = "restore" if group[0].reason == "pre_restore" else "reset"
+        kinds = ", ".join("HA" if s.kind == "ha" else "Z-Wave" for s in group)
+        date = f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]} {stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}"
+        t.add_row(str(i), date, reason, kinds)
+    console.print(t)
+    return stamps
 
 
 def panel_maintenance(status: MaintenanceStatus) -> None:

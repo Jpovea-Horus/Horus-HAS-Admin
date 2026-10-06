@@ -35,6 +35,7 @@ def menu_cloudflare_remote(api: HasControllerAPI) -> None:
         else:
             opts.append(("3", "Eliminar cloudflared (Uninstall)"))
         opts.append(("4", "Aplicar trusted_proxies en HA (evitar error 400)"))
+        opts.append(("", ""))
         opts.append(("0", "Volver"))
 
         menu_options("Acciones Cloudflare", opts)
@@ -96,6 +97,7 @@ def menu_zerotier(api: HasControllerAPI) -> None:
             ("1", "Unirse a una red"),
             ("2", "Salir de una red"),
             ("3", "Ver información de redes"),
+            ("", ""),
             ("0", "Volver"),
         ],
     )
@@ -149,6 +151,7 @@ def menu_cellular(api: HasControllerAPI) -> None:
             [
                 ("1", "Dar de baja al servicio (stop + disable)"),
                 ("2", "Reactivar servicio (enable + start)"),
+                ("", ""),
                 ("0", "Volver"),
             ],
         )
@@ -196,6 +199,7 @@ def menu_mqtt(api: HasControllerAPI) -> None:
             [
                 ("1", "Actualizar diagnóstico"),
                 ("2", "Deshabilitar módulo MQTT (backup + reinicio)"),
+                ("", ""),
                 ("0", "Volver"),
             ],
         )
@@ -265,6 +269,7 @@ def menu_remote_connection(api: HasControllerAPI) -> None:
             [
                 ("1", "Consultar ZeroTier"),
                 ("2", "Consultar Cloudflare (Remoto)"),
+                ("", ""),
                 ("0", "Volver al menú principal"),
             ],
         )
@@ -301,22 +306,25 @@ def menu_debian_apt_venv_repair(api: HasControllerAPI) -> None:
         menu_options(
             "Pasos de reparación",
             [
-                ("1", "Paso 0: Diagnosticar (venv + OS + sources)"),
-                ("2", "Paso 1: Backup sources.list"),
-                ("3", "Paso 2: Archive mirrors (sin security)"),
-                ("4", "Paso 3: apt-get update (ignorar fechas)"),
-                ("5", "Paso 4: Instalar pip stack (MAIN)"),
-                ("6", "Paso 5: Instalar python3.9-venv (snapshot)"),
-                ("7", "Paso 6: Verificar venv final"),
-                ("8", "Ejecutar reparación completa (pasos 1→6)"),
+                ("D", "Paso 0: Diagnosticar (venv + OS + sources)"),
+                ("", ""),
+                ("1", "Paso 1: Backup sources.list"),
+                ("2", "Paso 2: Archive mirrors (sin security)"),
+                ("3", "Paso 3: apt-get update (ignorar fechas)"),
+                ("4", "Paso 4: Instalar pip stack (MAIN)"),
+                ("5", "Paso 5: Instalar python3.9-venv (snapshot)"),
+                ("6", "Paso 6: Verificar venv final"),
+                ("", ""),
+                ("9", "Ejecutar reparación completa (pasos 1→6)"),
+                ("", ""),
                 ("0", "Volver"),
             ],
         )
-        op = ask("Opción")
+        op = ask("Opción").upper()
         if op == "0":
             break
         try:
-            if op == "8":
+            if op == "9":
                 if not status.is_debian11:
                     error("No es Debian 11 / bullseye; abortado.")
                     continue
@@ -338,13 +346,13 @@ def menu_debian_apt_venv_repair(api: HasControllerAPI) -> None:
                 continue
 
             step_map = {
-                "1": 0,
-                "2": 1,
-                "3": 2,
-                "4": 3,
-                "5": 4,
-                "6": 5,
-                "7": 6,
+                "D": 0,
+                "1": 1,
+                "2": 2,
+                "3": 3,
+                "4": 4,
+                "5": 5,
+                "6": 6,
             }
             if op not in step_map:
                 warning("Opción no válida.")
@@ -392,11 +400,14 @@ def menu_self_heal(api: HasControllerAPI) -> None:
             [
                 ("1", "Actualizar diagnóstico"),
                 ("2", "Aplicar reparación recomendada (auto)"),
+                ("", ""),
                 ("3", "Solo reiniciar servicio Z-Wave"),
                 ("4", "Solo corregir URL Z-Wave → ws://127.0.0.1:3000"),
                 ("5", "Reparar discovery_keys + reiniciar HA"),
                 ("6", "Limpiar DB shm/wal + iniciar HA"),
+                ("", ""),
                 ("7", "Reiniciar Home Assistant"),
+                ("", ""),
                 ("0", "Volver"),
             ],
         )
@@ -465,6 +476,7 @@ def menu_error_correction(api: HasControllerAPI) -> None:
                 ("4", "HA / Z-Wave Self-Heal - Diagnóstico y reparación automática HA ↔ Z-Wave"),
                 ("5", "Reparar registro HA (Fix Registry/Integraciones) - Soluciona errores en la base de datos de integraciones"),
                 ("6", "Limpiar residuos de Base de Datos (Fix Historial) - Arregla historiales que no cargan"),
+                ("", ""),
                 ("0", "Volver al menú principal"),
             ],
         )

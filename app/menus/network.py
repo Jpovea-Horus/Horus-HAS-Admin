@@ -79,6 +79,7 @@ def _menu_ip_profile(api: HasControllerAPI, device_filter: str) -> None:
     ]
     if device_filter == "ethernet":
         opts.append(("3", "Re-aplicar interfaz"))
+    opts.append(("", ""))
     opts.append(("0", "Volver"))
     menu_options("Configuración IP", opts)
     op = ask("Opción")
@@ -120,6 +121,7 @@ def menu_wifi(api: HasControllerAPI) -> None:
                 ("4", "Configurar IP (DHCP / estática)"),
                 ("5", "Diagnosticar WiFi"),
                 ("6", "Reparar WiFi (si scan vacío / unavailable)"),
+                ("", ""),
                 ("0", "Volver al menú principal"),
             ],
         )

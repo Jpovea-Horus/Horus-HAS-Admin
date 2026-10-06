@@ -22,9 +22,10 @@ if os.name == "nt":
 
 from controller import HasControllerAPI
 from exceptions import HasApiError, NotConnectedError
+from menus.backup import menu_backups
 from menus.connect import clear_connect_memory, connect_flow, reconnect_or_prompt
 from menus.diagnostics import menu_review_diagnostics
-from menus.ha import menu_administrative
+from menus.ha import menu_ha_admin, menu_hostname
 from menus.network import menu_ethernet, menu_network_status, menu_wifi
 from menus.remote import menu_error_correction, menu_remote_connection
 from paths import APP_VERSION
@@ -87,13 +88,22 @@ def main_menu(api: HasControllerAPI) -> str:
         menu_panel = get_menu_panel(
             "Gestor Nexxo 800",
             [
+                ("", "[dim]Red[/dim]"),
                 ("1", "Ver estado de red"),
                 ("2", "Configurar Ethernet"),
                 ("3", "Configurar Wi-Fi"),
-                ("4", "Configuración administrativa"),
-                ("5", "Consultar Conexión Remota"),
-                ("6", "Diagnóstico y revisión"),
-                ("7", "Modo Corrección de errores"),
+                ("4", "Conexión remota (ZeroTier / Cloudflare)"),
+                ("", ""),
+                ("", "[dim]Sistema[/dim]"),
+                ("5", "Home Assistant (usuarios, configuración, integraciones)"),
+                ("6", "Backups y espacio en disco"),
+                ("7", "Hostname del controlador"),
+                ("", ""),
+                ("", "[dim]Soporte[/dim]"),
+                ("8", "Diagnóstico y revisión"),
+                ("9", "Modo Corrección de errores"),
+                ("", ""),
+                ("", "[dim]Opciones App[/dim]"),
                 ("P", "Próximo (Cambiar controlador)"),
                 ("R", "Actualizar info sistema"),
                 ("U", "Buscar actualizaciones de la app"),
@@ -117,12 +127,17 @@ def main_menu(api: HasControllerAPI) -> str:
             elif op == "3":
                 menu_wifi(api)
             elif op == "4":
-                menu_administrative(api)
-            elif op == "5":
                 menu_remote_connection(api)
+            elif op == "5":
+                menu_ha_admin(api)
             elif op == "6":
-                menu_review_diagnostics(api)
+                menu_backups(api)
             elif op == "7":
+                menu_hostname(api)
+                ask("Pulse Enter para volver al menú")
+            elif op == "8":
+                menu_review_diagnostics(api)
+            elif op == "9":
                 menu_error_correction(api)
             elif op == "R":
                 info("Actualizando información del sistema…")
