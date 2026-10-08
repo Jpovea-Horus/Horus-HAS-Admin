@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 import paramiko
 
@@ -453,6 +453,51 @@ class SSHClient:
         finally:
             stop.set()
             reader.join(timeout=1)
+
+    def stream_lines(
+        self,
+        command: str,
+        use_sudo: bool = False,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> Iterator[str]:
+        """Emite la salida de un comando línea a línea (journalctl -f, docker logs -f).
+
+        Usa pseudo-TTY para que el proceso remoto reciba SIGHUP al cerrar el canal.
+        """
+        if not self.is_connected:
+            raise NotConnectedError("No hay sesión SSH. Llame a connect() primero.")
+        if use_sudo and self._needs_sudo(command) and not self._is_root:
+            command = f"sudo {command}"
+        assert self._client is not None
+        transport = self._client.get_transport()
+        if transport is None:
+            raise SSHConnectionError("Transporte SSH no disponible.")
+
+        channel = transport.open_session()
+        channel.get_pty(term="dumb", width=400, height=50)
+        channel.settimeout(0.3)
+        channel.exec_command(command)
+        pending = b""
+        try:
+            while True:
+                if should_stop and should_stop():
+                    break
+                try:
+                    data = channel.recv(4096)
+                except socket.timeout:
+                    if channel.exit_status_ready() and not channel.recv_ready():
+                        break
+                    continue
+                if not data:
+                    break
+                pending += data
+                *lines, pending = pending.split(b"\n")
+                for raw in lines:
+                    yield raw.decode("utf-8", errors="replace").rstrip("\r")
+            if pending:
+                yield pending.decode("utf-8", errors="replace").rstrip("\r")
+        finally:
+            channel.close()
 
     @staticmethod
     def _needs_sudo(command: str) -> bool:

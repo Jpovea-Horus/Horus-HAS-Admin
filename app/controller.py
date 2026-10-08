@@ -20,6 +20,7 @@ from cloudflare_manager import CloudflareManager
 from exceptions import SSHCommandError
 from ha_config_manager import HaConfigManager
 from ha_users_manager import HaUsersManager
+from hacs_manager import HacsManager
 from hostname_manager import HostnameManager
 from mqtt_manager import MqttManager
 from plugin_service_manager import PluginServiceManager
@@ -28,6 +29,7 @@ from admin_network_host_manager import AdminNetworkHostManager
 from debian_repair_manager import DebianRepairManager
 from remote_backup_manager import RemoteBackupManager
 from self_heal_manager import SelfHealManager
+from support_manager import SupportManager
 from zwave_panel_manager import ZwavePanelManager
 from models import (
     BackupEntry,
@@ -35,6 +37,7 @@ from models import (
     CellularStatus,
     SystemHealthStatus,
     HaConfigurationStatus,
+    HacsStatus,
     HaUser,
     HaUsersStatus,
     HostnameInfo,
@@ -55,6 +58,11 @@ from models import (
     ZwavePanelStatus,
     ZeroTierStatus,
     CloudflareStatus,
+    HealthCheckStatus,
+    LogSource,
+    NetworkTestItem,
+    NetworkTestReport,
+    SupportReportResult,
 )
 from network_manager import NetworkManager
 from ssh_client import SSHClient
@@ -79,11 +87,13 @@ class HasControllerAPI:
         self.admin_network_host = AdminNetworkHostManager(self.ssh)
         self.debian_repair = DebianRepairManager(self.ssh)
         self.ha_config = HaConfigManager(self.ssh)
+        self.hacs = HacsManager(self.ssh, self.ha_config)
         self.self_heal = SelfHealManager(self.ssh, self.ha_config)
         self.cloudflare = CloudflareManager(self.ssh)
         self.backups = BackupManager(self.ssh)
         self.horus_backup = RemoteBackupManager(self.ssh, self.ha_config, self.self_heal)
         self.maintenance = MaintenanceManager(self.ssh)
+        self.support = SupportManager(self.ssh, self.ha_config, self.self_heal)
         self._session: Optional[SessionInfo] = None
 
     @property
@@ -325,6 +335,18 @@ class HasControllerAPI:
     def remove_helper_manager(self) -> str:
         return self.helper_manager.remove()
 
+    def get_hacs_status(self) -> HacsStatus:
+        return self.hacs.get_status()
+
+    def install_hacs_from_github(self, replace: bool = True) -> str:
+        return self.hacs.install_from_github(replace=replace)
+
+    def install_hacs_from_local(self, local_path: str, replace: bool = True) -> str:
+        return self.hacs.install_from_local(local_path, replace=replace)
+
+    def remove_hacs(self) -> str:
+        return self.hacs.remove()
+
     def get_zwave_panel_status(self) -> ZwavePanelStatus:
         return self.zwave_panel.get_status()
 
@@ -534,6 +556,53 @@ class HasControllerAPI:
 
     def ping(self, host: str = "8.8.8.8") -> str:
         return self.network.ping(host)
+
+    def get_health_check(self) -> HealthCheckStatus:
+        return self.support.health_check()
+
+    def get_log_sources(self) -> list[LogSource]:
+        return self.support.log_sources()
+
+    def read_log(
+        self, source: LogSource, lines: int = 200, min_level: str = "warn", text: str = ""
+    ) -> list[tuple[str, str]]:
+        return self.support.read_log(source, lines=lines, min_level=min_level, text=text)
+
+    def follow_log(
+        self,
+        source: LogSource,
+        min_level: str = "warn",
+        text: str = "",
+        should_stop: Optional[Callable[[], bool]] = None,
+    ):
+        return self.support.follow_log(source, min_level=min_level, text=text, should_stop=should_stop)
+
+    def run_network_tests(self) -> NetworkTestReport:
+        return self.support.run_network_tests()
+
+    def traceroute(self, host: str = "8.8.8.8") -> str:
+        return self.support.traceroute(host)
+
+    def check_port(self, host: str, port: int) -> NetworkTestItem:
+        return self.support.check_port(host, port)
+
+    def create_support_report(
+        self, on_step: Optional[Callable[[str], None]] = None
+    ) -> SupportReportResult:
+        return self.support.build_report(
+            {
+                "Red": self.get_network_summary,
+                "Salud del sistema": self.get_system_health,
+                "HA / Z-Wave (self-heal)": self.get_self_heal_status,
+                "MQTT Z-Wave JS UI": self.get_mqtt_diagnostic,
+                "Configuración HA (HTTP / proxy)": self.get_ha_configuration_status,
+                "Cloudflare": self.get_cloudflare_status,
+                "ZeroTier": self.check_zerotier,
+                "Módulo celular": self.get_cellular_status,
+            },
+            session=self._session,
+            on_step=on_step,
+        )
 
     def get_maintenance_status(self) -> MaintenanceStatus:
         return self.maintenance.get_status()

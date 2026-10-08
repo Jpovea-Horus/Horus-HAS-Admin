@@ -31,6 +31,9 @@ if os.path.isdir(helper_cc):
     extra_datas.append((helper_cc, "integrations/helper_manager/custom_components"))
 if os.path.isdir(zwave_panel_src):
     extra_datas.append((zwave_panel_src, "integrations/panel_zwave_js_ui"))
+hacs_src = os.path.join(INTEGRATIONS_SRC, "hacs")
+if os.path.isdir(hacs_src):
+    extra_datas.append((hacs_src, "integrations/hacs"))
 aws_cred_src = os.path.join(
     INTEGRATIONS_SRC,
     "plugin_service_energy",
@@ -63,10 +66,12 @@ a = Analysis(
                 "ha_config_manager",
                 "plugin_service_manager",
                 "ha_integration_manager",
+                "hacs_manager",
                 "admin_network_host_manager",
                 "zwave_panel_manager",
                 "backup_manager",
                 "remote_backup_manager",
+                "support_manager",
                 "updater",
                 "menus",
                 "menus.connect",

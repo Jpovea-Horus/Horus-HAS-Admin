@@ -383,6 +383,17 @@ class HaIntegrationStatus:
 
 
 @dataclass
+class HacsStatus:
+    """Estado de HACS (custom_components/hacs) y compatibilidad con la versión de HA."""
+
+    integration: HaIntegrationStatus
+    ha_version: str = ""
+    min_ha_version: str = ""
+    ha_compatible: Optional[bool] = None  # None = versión no detectada
+    entry_configured: bool = False
+
+
+@dataclass
 class AdminNetworkHostStatus:
     """Estado del servicio host admin_network (systemd + API :8765)."""
 
@@ -485,3 +496,73 @@ class SelfHealStatus:
     recommended_action: str = "none"
     action_detail: str = ""
     error: str = ""
+
+
+@dataclass
+class HealthCheckItem:
+    """Fila del semáforo de estado."""
+
+    key: str
+    label: str
+    level: str = "ok"  # ok | warn | fail | unknown
+    detail: str = ""
+
+
+@dataclass
+class HealthCheckStatus:
+    """Semáforo rápido tras conectar (HA, Z-Wave, disco, reloj, túnel, systemd)."""
+
+    items: list[HealthCheckItem] = field(default_factory=list)
+    checked_at: str = ""
+    error: str = ""
+
+    @property
+    def overall(self) -> str:
+        levels = {i.level for i in self.items}
+        if self.error or "fail" in levels:
+            return "fail"
+        if levels & {"warn", "unknown"}:
+            return "warn"
+        return "ok"
+
+
+@dataclass
+class NetworkTestItem:
+    """Resultado de una prueba de red ejecutada desde el controlador."""
+
+    group: str
+    label: str
+    level: str = "ok"  # ok | warn | fail | info
+    detail: str = ""
+
+
+@dataclass
+class NetworkTestReport:
+    items: list[NetworkTestItem] = field(default_factory=list)
+    error: str = ""
+
+
+@dataclass
+class LogSource:
+    """Origen de log remoto. Los comandos usan __N__ como cantidad de líneas."""
+
+    key: str
+    label: str
+    tail_cmd: str = ""
+    follow_cmd: str = ""
+    level_in_text: bool = True  # False: el comando ya filtra por prioridad
+    available: bool = True
+    detail: str = ""
+
+    def tail_command(self, lines: int) -> str:
+        return self.tail_cmd.replace("__N__", str(int(lines)))
+
+    def follow_command(self, lines: int = 50) -> str:
+        return self.follow_cmd.replace("__N__", str(int(lines)))
+
+
+@dataclass
+class SupportReportResult:
+    zip_path: str
+    html_path: str
+    warnings: list[str] = field(default_factory=list)

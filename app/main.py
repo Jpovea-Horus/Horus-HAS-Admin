@@ -24,7 +24,7 @@ from controller import HasControllerAPI
 from exceptions import HasApiError, NotConnectedError
 from menus.backup import menu_backups
 from menus.connect import clear_connect_memory, connect_flow, reconnect_or_prompt
-from menus.diagnostics import menu_review_diagnostics
+from menus.diagnostics import menu_review_diagnostics, support_report_flow
 from menus.ha import menu_ha_admin, menu_hostname
 from menus.network import menu_ethernet, menu_network_status, menu_wifi
 from menus.remote import menu_error_correction, menu_remote_connection
@@ -38,10 +38,12 @@ from ui import (
     get_menu_panel,
     info,
     main_menu_layout,
+    panel_health_check,
     panel_system_info,
     section,
     success,
     warning,
+    working,
 )
 
 
@@ -79,9 +81,24 @@ def update_flow(api: HasControllerAPI | None = None, silent: bool = False) -> No
         error(str(exc))
 
 
+def _health_panel(api: HasControllerAPI):
+    try:
+        with working("Revisando estado del controlador…"):
+            return panel_health_check(api.get_health_check())
+    except NotConnectedError:
+        raise
+    except HasApiError as exc:
+        warning(f"No se pudo calcular el semáforo: {exc}")
+        return None
+
+
 def main_menu(api: HasControllerAPI) -> str:
     """Bucle del menú. Devuelve: exit | next | lost."""
     system_info = api.get_system_info()
+    try:
+        health_panel = _health_panel(api)
+    except NotConnectedError:
+        return "lost"
 
     while True:
         banner()
@@ -100,18 +117,19 @@ def main_menu(api: HasControllerAPI) -> str:
                 ("7", "Hostname del controlador"),
                 ("", ""),
                 ("", "[dim]Soporte[/dim]"),
-                ("8", "Diagnóstico y revisión"),
+                ("8", "Diagnóstico (semáforo, logs, pruebas de red)"),
                 ("9", "Modo Corrección de errores"),
+                ("I", "Generar informe de soporte (ZIP + HTML)"),
                 ("", ""),
                 ("", "[dim]Opciones App[/dim]"),
                 ("P", "Próximo (Cambiar controlador)"),
-                ("R", "Actualizar info sistema"),
+                ("R", "Actualizar info sistema y semáforo"),
                 ("U", "Buscar actualizaciones de la app"),
                 ("0", "Salir"),
             ],
         )
         sys_panel = panel_system_info(system_info)
-        main_menu_layout(menu_panel, sys_panel)
+        main_menu_layout(menu_panel, sys_panel, health_panel)
 
         op = ask("Opción").upper()
         try:
@@ -139,9 +157,12 @@ def main_menu(api: HasControllerAPI) -> str:
                 menu_review_diagnostics(api)
             elif op == "9":
                 menu_error_correction(api)
+            elif op == "I":
+                support_report_flow(api)
             elif op == "R":
                 info("Actualizando información del sistema…")
                 system_info = api.refresh_system_info()
+                health_panel = _health_panel(api)
                 success("Información actualizada.")
             elif op == "U":
                 update_flow(api)

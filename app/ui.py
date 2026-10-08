@@ -8,7 +8,7 @@ import re
 import sys
 
 from rich import box
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.rule import Rule
@@ -17,7 +17,6 @@ from rich.table import Table
 from rich.theme import Theme
 from rich.text import Text
 
-from rich.columns import Columns
 from rich.layout import Layout
 from rich.live import Live
 
@@ -26,9 +25,13 @@ from models import (
     CellularStatus,
     DebianRepairStatus,
     HaConfigurationStatus,
+    HacsStatus,
     HaIntegrationStatus,
     HaUser,
     HaUsersStatus,
+    HealthCheckStatus,
+    NetworkTestItem,
+    NetworkTestReport,
     HorusArchive,
     HorusBackupStatus,
     HorusSnapshot,
@@ -299,10 +302,90 @@ def table_wifi(networks: list) -> None:
     console.print(t)
 
 
-def main_menu_layout(menu_panel: Panel, system_panel: Panel) -> None:
-    """Muestra la info del sistema y el menú en dos columnas (Info primero)."""
-    columns = Columns([system_panel, menu_panel], expand=True, equal=True)
-    console.print(columns)
+def main_menu_layout(
+    menu_panel: Panel, system_panel: Panel, health_panel: Panel | None = None
+) -> None:
+    """Muestra la info del sistema (y el semáforo) y el menú en dos columnas."""
+    left = Group(system_panel, health_panel) if health_panel is not None else system_panel
+    grid = Table.grid(expand=True, padding=(0, 1))
+    grid.add_column(ratio=1)
+    grid.add_column(ratio=1)
+    grid.add_row(left, menu_panel)
+    console.print(grid)
+
+
+def working(message: str):
+    """Spinner mientras se ejecuta una operación remota (usar con `with`)."""
+    return console.status(f"[info]{message}[/info]", spinner="dots")
+
+
+_LEVEL_STYLE = {
+    "ok": ("●", "bold green", "OK"),
+    "warn": ("●", "bold yellow", "REVISAR"),
+    "fail": ("●", "bold red", "FALLA"),
+    "info": ("○", "dim", "INFO"),
+    "unknown": ("○", "dim", "?"),
+}
+
+_HEALTH_TITLES = {
+    "ok": ("green", "todo OK"),
+    "warn": ("yellow", "revisar"),
+    "fail": ("red", "con fallas"),
+}
+
+
+def panel_health_check(status: HealthCheckStatus) -> Panel:
+    """Semáforo de estado (verde / amarillo / rojo)."""
+    table = Table(show_header=False, box=None, padding=(0, 1), expand=True)
+    table.add_column("", width=1, no_wrap=True)
+    table.add_column("Chequeo", style="label", no_wrap=True)
+    table.add_column("Detalle", style="dim")
+    for item in status.items:
+        icon, style, _ = _LEVEL_STYLE.get(item.level, _LEVEL_STYLE["unknown"])
+        table.add_row(Text(icon, style=style), item.label, Text(item.detail))
+    if status.error:
+        table.add_row(Text("●", style="bold red"), "Error", Text(status.error))
+    border, label = _HEALTH_TITLES[status.overall]
+    return Panel(
+        table,
+        title=f"[subtitle]Semáforo · {label}[/subtitle]",
+        subtitle=f"[dim]{status.checked_at}[/dim]" if status.checked_at else None,
+        border_style=border,
+        box=box.ROUNDED,
+        expand=True,
+    )
+
+
+def table_network_tests(items: list[NetworkTestItem], title: str = "Pruebas de red") -> None:
+    t = Table(title=title, box=box.ROUNDED, header_style="bold cyan", border_style="cyan")
+    t.add_column("Grupo", style="dim", no_wrap=True)
+    t.add_column("Prueba", style="bold")
+    t.add_column("Estado", no_wrap=True)
+    t.add_column("Detalle")
+    last_group = ""
+    for item in items:
+        icon, style, label = _LEVEL_STYLE.get(item.level, _LEVEL_STYLE["unknown"])
+        group = item.group if item.group != last_group else ""
+        last_group = item.group
+        t.add_row(group, item.label, Text(f"{icon} {label}", style=style), Text(item.detail))
+    console.print(t)
+
+
+def panel_network_tests(report: NetworkTestReport) -> None:
+    if report.error:
+        error(report.error)
+    table_network_tests(report.items)
+
+
+def panel_traceroute(output: str, host: str) -> None:
+    console.print(
+        Panel(Text(output), title=f"Traceroute → {host}", border_style="cyan", box=box.ROUNDED)
+    )
+
+
+def log_line(line: str, level: str) -> None:
+    style = {"error": "bold red", "warn": "yellow"}.get(level, "white")
+    console.print(Text(line, style=style), soft_wrap=True)
 
 
 def panel_profile(profile: str, prof) -> None:
@@ -984,6 +1067,53 @@ def panel_helper_manager(status: HaIntegrationStatus) -> None:
     )
     if status.error:
         body.append(f"\n{status.error}\n", style="bold red")
+
+    console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+
+def panel_hacs(status: HacsStatus) -> None:
+    """Panel HACS (custom_components/hacs + compatibilidad HA)."""
+    integ = status.integration
+    if (integ.error and not integ.parent_exists) or status.ha_compatible is False:
+        border = "red"
+    elif integ.component_exists:
+        border = "green"
+    else:
+        border = "yellow"
+
+    body = Text()
+    body.append("HACS — HOME ASSISTANT COMMUNITY STORE\n", style="bold underline")
+    body.append("-------------------------------------\n")
+    body.append(f"Ruta: {integ.component_dir}\n", style="dim")
+    body.append("Home Assistant: ", style="info")
+    if status.ha_compatible is None:
+        body.append("versión no detectada\n", style="bold yellow")
+    elif status.ha_compatible:
+        body.append(f"{status.ha_version} (compatible)\n", style="success")
+    else:
+        body.append(
+            f"{status.ha_version} — requiere >= {status.min_ha_version}\n",
+            style="bold red",
+        )
+    body.append("hacs: ", style="info")
+    body.append(
+        "PRESENTE\n" if integ.component_exists else "AUSENTE\n",
+        style="success" if integ.component_exists else "bold yellow",
+    )
+    if integ.manifest_version:
+        body.append(f"versión: {integ.manifest_version}\n", style="dim")
+    body.append("Integración añadida en HA: ", style="info")
+    body.append(
+        "SÍ\n" if status.entry_configured else "NO\n",
+        style="success" if status.entry_configured else "bold yellow",
+    )
+    body.append(
+        "\nTras instalar: reinicie HA, añada 'HACS' en Dispositivos y Servicios "
+        "y autorice con su cuenta GitHub (github.com/login/device).\n",
+        style="dim",
+    )
+    if integ.error:
+        body.append(f"\n{integ.error}\n", style="bold red")
 
     console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+
 from controller import HasControllerAPI
 from exceptions import HasApiError, ValidationError
 from ui import (
@@ -14,6 +17,7 @@ from ui import (
     menu_options,
     panel_ha_configuration,
     panel_ha_users,
+    panel_hacs,
     panel_helper_manager,
     panel_hostname,
     panel_plugin_service,
@@ -24,6 +28,21 @@ from ui import (
     success,
     warning,
 )
+
+_USERS_PWD_SALT = bytes.fromhex("0a415f37ddca8118af7c0af99fe96538")
+_USERS_PWD_HASH = bytes.fromhex("ba9b7ee9b2261ba37a3afadd7e21dc2425ea2421675ec3b1fda74df924edc412")
+_USERS_PWD_ITER = 200_000
+
+
+def _check_users_password(max_attempts: int = 3) -> bool:
+    for attempt in range(1, max_attempts + 1):
+        pwd = ask_password("Contraseña de administración de usuarios")
+        digest = hashlib.pbkdf2_hmac("sha256", pwd.encode(), _USERS_PWD_SALT, _USERS_PWD_ITER)
+        if hmac.compare_digest(digest, _USERS_PWD_HASH):
+            return True
+        warning(f"Contraseña incorrecta ({attempt}/{max_attempts}).")
+    error("Acceso denegado.")
+    return False
 
 
 def menu_hostname(api: HasControllerAPI) -> None:
@@ -705,6 +724,98 @@ def menu_helper_manager(api: HasControllerAPI) -> None:
             error(str(exc))
 
 
+def menu_hacs(api: HasControllerAPI) -> None:
+    from paths import get_local_hacs_source
+
+    default_local = get_local_hacs_source()
+    while True:
+        section("HACS (Home Assistant Community Store)")
+        try:
+            status = api.get_hacs_status()
+        except HasApiError as exc:
+            error(str(exc))
+            break
+
+        panel_hacs(status)
+        integ = status.integration
+        if status.ha_compatible is False:
+            error(
+                f"HA {status.ha_version} no soporta HACS actual "
+                f"(mínimo {status.min_ha_version})."
+            )
+        elif integ.component_exists:
+            success("HACS presente en custom_components/.")
+        else:
+            warning("Falta hacs en custom_components/.")
+
+        menu_options(
+            "Acciones",
+            [
+                ("1", "Actualizar verificación"),
+                ("2", "Instalar descargando desde GitHub (en el controlador)"),
+                ("3", "Subir / instalar desde carpeta local o hacs.zip"),
+                ("4", "Eliminar HACS"),
+                ("5", "Reiniciar Home Assistant"),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                continue
+            if op in ("2", "3"):
+                if integ.component_exists:
+                    warning("Ya existe; se reemplazará.")
+                if op == "2":
+                    if not confirm(
+                        "¿Descargar el último release de HACS en el controlador?",
+                        default=True,
+                    ):
+                        continue
+                    info("Descargando hacs.zip desde GitHub en el controlador…")
+                    success(api.install_hacs_from_github(replace=True))
+                else:
+                    local = ask_confirmed_path("HACS (carpeta o hacs.zip)", default_local)
+                    if not local:
+                        warning("Ruta vacía.")
+                        continue
+                    default_local = local
+                    if not confirm(f"¿Subir '{local}' → hacs?", default=True):
+                        continue
+                    info("Subiendo por SFTP…")
+                    success(api.install_hacs_from_local(local, replace=True))
+                if confirm("¿Reiniciar Home Assistant ahora?", default=True):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+                info(
+                    "En HA: Ajustes > Dispositivos y Servicios > Añadir > HACS, "
+                    "y autorice el código en github.com/login/device."
+                )
+            elif op == "4":
+                if not integ.component_exists:
+                    info("No hay nada que eliminar.")
+                    continue
+                if status.entry_configured:
+                    warning(
+                        "HACS sigue añadido en HA: elimine primero la integración "
+                        "desde Dispositivos y Servicios para evitar errores."
+                    )
+                if confirm("¿Eliminar custom_components/hacs?", default=False):
+                    success(api.remove_hacs())
+            elif op == "5":
+                if confirm("¿Reiniciar Home Assistant?", default=False):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+            else:
+                warning("Opción no válida.")
+        except ValidationError as exc:
+            error(str(exc))
+        except HasApiError as exc:
+            error(str(exc))
+
+
 def menu_zwave_panel(api: HasControllerAPI) -> None:
     from paths import get_local_zwave_panel_source
 
@@ -1021,7 +1132,7 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
         if status.core_missing:
             warning(
                 "Faltan integraciones core (Historial, Logbook, Energía…): "
-                "no aparecen en HA. Use opción 5 para restaurarlas sin Discovery."
+                "no aparecen en HA. Use opción 6 para restaurarlas sin Discovery."
             )
 
         menu_options(
@@ -1031,11 +1142,12 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                 ("2", "Admin Network (administrador de Redes)"),
                 ("3", "Helper Manager (administrador de Auxiliares)"),
                 ("4", "Z-Wave JS UI (panel lateral :8091)"),
+                ("5", "HACS (Home Assistant Community Store)"),
                 ("", ""),
-                ("5", "Restaurar integraciones core sin Discovery - Recupera Historial, Logbook, Energía y Backup"),
-                ("6", "Reparar registro HA (Fix KeyError discovery_keys)"),
+                ("6", "Restaurar integraciones core sin Discovery - Recupera Historial, Logbook, Energía y Backup"),
+                ("7", "Reparar registro HA (Fix KeyError discovery_keys)"),
                 ("", ""),
-                ("7", "Reiniciar Home Assistant"),
+                ("8", "Reiniciar Home Assistant"),
                 ("", ""),
                 ("0", "Volver"),
             ],
@@ -1053,6 +1165,8 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
             elif op == "4":
                 menu_zwave_panel(api)
             elif op == "5":
+                menu_hacs(api)
+            elif op == "6":
                 if not status.core_missing:
                     info("Las integraciones core ya están cargadas. No se requieren cambios.")
                     continue
@@ -1064,7 +1178,7 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                 if confirm("¿Restaurar integraciones core y reiniciar HA?", default=True):
                     info("Escribiendo configuration.yaml y reiniciando HA…")
                     success(api.restore_ha_core_integrations(restart=True))
-            elif op == "6":
+            elif op == "7":
                 warning(
                     "Esta reparación añade discovery_keys faltantes al registro de HA. "
                     "Soluciona integraciones que no aparecen."
@@ -1074,7 +1188,7 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                     success(api.repair_ha_config_entries())
                     info("Reiniciando Home Assistant para aplicar cambios…")
                     success(api.restart_ha())
-            elif op == "7":
+            elif op == "8":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
                     info("Reiniciando HA…")
                     success(api.restart_ha())
@@ -1103,7 +1217,8 @@ def menu_ha_admin(api: HasControllerAPI) -> None:
         if op == "0":
             break
         if op == "1":
-            menu_ha_users(api)
+            if _check_users_password():
+                menu_ha_users(api)
         elif op == "2":
             menu_ha_configuration(api)
         elif op == "3":

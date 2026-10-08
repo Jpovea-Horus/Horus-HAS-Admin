@@ -22,6 +22,7 @@ EXE_DIR = get_executable_dir()
 
 INTEGRATION_ADMIN_NETWORK = "admin_network"
 INTEGRATION_HELPER = "helper_manager"
+INTEGRATION_HACS = "hacs"
 INTEGRATION_ZWAVE_PANEL = "panel_zwave_js_ui"
 INTEGRATION_PLUGIN = "plugin_service"
 INTEGRATION_PLUGIN_REL = os.path.join("plugin_service_energy", "plugin_service")
@@ -132,6 +133,15 @@ def get_local_helper_manager_source() -> str:
     return find_integration_dir(INTEGRATION_HELPER)
 
 
+def get_local_hacs_source() -> str:
+    """Carpeta hacs/ o, si existe dentro, el hacs.zip del release."""
+    folder = find_integration_dir(INTEGRATION_HACS)
+    if _integration_looks_valid(folder, INTEGRATION_HACS):
+        return folder
+    bundled_zip = os.path.join(folder, "hacs.zip")
+    return bundled_zip if os.path.isfile(bundled_zip) else folder
+
+
 def get_local_zwave_panel_source() -> str:
     return find_integration_dir(INTEGRATION_ZWAVE_PANEL)
 
@@ -183,6 +193,14 @@ def get_local_backups_dir() -> str:
     if env_dir:
         return env_dir
     return os.path.join(os.path.expanduser("~"), "Documents", "Backups_Horus")
+
+
+def get_local_support_dir() -> str:
+    """Carpeta local de informes de soporte (override con HAS_SUPPORT_DIR)."""
+    env_dir = (os.environ.get("HAS_SUPPORT_DIR") or "").strip()
+    if env_dir:
+        return env_dir
+    return os.path.join(os.path.expanduser("~"), "Documents", "Soporte_Horus")
 
 
 # Rutas Remotas (Base configurable)
