@@ -17,9 +17,9 @@ import paramiko
 from exceptions import NotConnectedError, SSHCommandError, SSHConnectionError
 from models import CommandResult, SessionInfo, SystemHealthStatus
 
-from paths import EXE_DIR, get_cloudflared_exe
+from paths import get_cloudflared_exe, user_data_file
 
-KNOWN_HOSTS_PATH = os.path.join(EXE_DIR, "ssh_known_hosts")
+KNOWN_HOSTS_PATH = user_data_file("ssh_known_hosts")
 
 DEFAULT_PORT = 22
 DEFAULT_TIMEOUT = 15

@@ -472,6 +472,33 @@ class ZwavePanelStatus:
 
 
 @dataclass
+class HaThemeStatus:
+    """Estado del tema Horus (colores del historial) en /config/themes."""
+
+    config_dir: str = ""
+    themes_dir: str = ""
+    theme_path: str = ""
+    yaml_path: str = ""
+    storage_path: str = ""
+    themes_dir_exists: bool = False
+    theme_exists: bool = False
+    theme_up_to_date: bool = False
+    colors: dict[str, str] = field(default_factory=dict)
+    yaml_exists: bool = False
+    frontend_themes_ok: bool = False
+    frontend_themes_conflict: bool = False
+    frontend_themes_detail: str = ""
+    default_theme: str = ""
+    default_dark_theme: str = ""
+    default_theme_set: bool = False
+    error: str = ""
+
+    @property
+    def installed(self) -> bool:
+        return self.theme_up_to_date and self.frontend_themes_ok and self.default_theme_set
+
+
+@dataclass
 class SelfHealStatus:
     """Diagnóstico HA / Z-Wave para autoreparación segura."""
 

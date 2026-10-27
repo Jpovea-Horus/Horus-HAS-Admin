@@ -6,9 +6,9 @@ import json
 import os
 from typing import Any
 
-from paths import EXE_DIR
+from paths import user_data_file
 
-HOSTS_FILE = os.path.join(EXE_DIR, "session_hosts.json")
+HOSTS_FILE = user_data_file("session_hosts.json")
 MAX_HOSTS = 8
 
 

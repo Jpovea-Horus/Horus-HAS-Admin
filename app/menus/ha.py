@@ -16,6 +16,7 @@ from ui import (
     info,
     menu_options,
     panel_ha_configuration,
+    panel_ha_theme,
     panel_ha_users,
     panel_hacs,
     panel_helper_manager,
@@ -949,6 +950,7 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                 ("10", "Reparar registro HA (Fix KeyError discovery_keys) - Soluciona errores internos de la base de datos de HA"),
                 ("", ""),
                 ("11", "Eliminar YAML (submenú)"),
+                ("12", "Colores del historial (tema Horus) - Estandariza colores de puertas, movimiento, luces e interruptores"),
                 ("0", "Volver"),
             ],
         )
@@ -1054,6 +1056,99 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                     success(api.restart_ha())
             elif op == "11":
                 _menu_delete_ha_yaml(api)
+            elif op == "12":
+                menu_ha_theme(api)
+            else:
+                warning("Opción no válida.")
+        except ValidationError as exc:
+            error(str(exc))
+        except HasApiError as exc:
+            error(str(exc))
+
+
+def menu_ha_theme(api: HasControllerAPI) -> None:
+    while True:
+        section("Colores del historial (tema Horus)")
+        try:
+            status = api.get_ha_theme_status()
+        except HasApiError as exc:
+            error(str(exc))
+            break
+
+        panel_ha_theme(status)
+        if status.installed:
+            success("Tema Horus aplicado y fijado por defecto.")
+        elif status.frontend_themes_conflict:
+            error(
+                "configuration.yaml tiene un bloque frontend/themes distinto; "
+                "corríjalo a mano antes de aplicar."
+            )
+        else:
+            warning("Colores estándar Horus no aplicados por completo.")
+        info(
+            "Los colores van por grupo (puertas, movimiento…). Para mover una entidad "
+            "de grupo: HA → entidad → Ajustes → 'Mostrar como'."
+        )
+
+        menu_options(
+            "Acciones",
+            [
+                ("1", "Actualizar verificación"),
+                ("2", "Aplicar colores estándar Horus (y fijar tema por defecto)"),
+                ("3", "Ver horus_theme.yaml"),
+                ("4", "Eliminar tema Horus (volver a colores nativos)"),
+                ("5", "Reiniciar Home Assistant"),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                continue
+            if op == "2":
+                warning(
+                    "Se escribirá themes/horus_theme.yaml, se añadirá el include de themes "
+                    "en configuration.yaml si falta (backup .bak.horus.themes) y se fijará "
+                    "'horus' como tema por defecto para todos los usuarios."
+                )
+                if not confirm("¿Aplicar colores estándar Horus?", default=True):
+                    continue
+                info("Aplicando tema Horus…")
+                success(api.apply_ha_theme(set_default=True))
+                if confirm("¿Validar configuración (check_config, 1–3 min)?", default=True):
+                    result = api.check_ha_config()
+                    if result.startswith("Errores detectados"):
+                        error(result)
+                        warning("No reinicie HA hasta corregir los errores.")
+                        ask("Pulse Enter para continuar")
+                        continue
+                    success(result)
+                if confirm("¿Reiniciar Home Assistant ahora para cargar el tema?", default=True):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+                    info(
+                        "En el navegador: Ctrl+F5. Los usuarios con tema personalizado en su "
+                        "perfil deben elegir 'Predeterminado del servidor' o 'horus'."
+                    )
+            elif op == "3":
+                path, content = api.get_ha_theme_yaml()
+                panel_yaml_content(content, path)
+                ask("Pulse Enter para continuar")
+            elif op == "4":
+                if not status.theme_exists and not status.default_theme_set:
+                    info("No hay tema Horus instalado.")
+                    continue
+                if confirm("¿Eliminar tema Horus (con backup)?", default=False):
+                    success(api.remove_ha_theme())
+                    if confirm("¿Reiniciar Home Assistant ahora?", default=True):
+                        info("Reiniciando HA…")
+                        success(api.restart_ha())
+            elif op == "5":
+                if confirm("¿Reiniciar Home Assistant?", default=False):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:

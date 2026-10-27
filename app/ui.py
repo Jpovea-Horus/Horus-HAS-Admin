@@ -25,6 +25,7 @@ from models import (
     CellularStatus,
     DebianRepairStatus,
     HaConfigurationStatus,
+    HaThemeStatus,
     HacsStatus,
     HaIntegrationStatus,
     HaUser,
@@ -1250,6 +1251,58 @@ def panel_ha_configuration(status: HaConfigurationStatus) -> None:
         border = "yellow"
 
     console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+
+def panel_ha_theme(status: HaThemeStatus) -> None:
+    """Panel del tema Horus: archivos, include en configuration.yaml y paleta."""
+    from ha_theme_manager import HISTORY_COLORS, THEME_NAME, THEMES_INCLUDE
+
+    if status.error or status.frontend_themes_conflict:
+        border = "red"
+    elif status.installed:
+        border = "green"
+    else:
+        border = "yellow"
+
+    body = Text()
+    body.append("HOME ASSISTANT — COLORES DEL HISTORIAL (TEMA HORUS)\n", style="bold underline")
+    body.append("------------------------------\n")
+    body.append(f"Tema: {status.theme_path}\n", style="dim")
+
+    def _flag(label: str, ok: bool, missing: str = "FALTA") -> None:
+        body.append(f"{label}: ", style="info")
+        body.append("OK\n" if ok else f"{missing}\n", style="success" if ok else "bold yellow")
+
+    _flag("Carpeta themes", status.themes_dir_exists, "NO EXISTE")
+    if not status.theme_exists:
+        _flag(f"Archivo {status.theme_path.rsplit('/', 1)[-1]}", False, "NO EXISTE")
+    else:
+        _flag("Colores estándar Horus", status.theme_up_to_date, "DIFERENTES")
+    _flag(f"configuration.yaml ({THEMES_INCLUDE})", status.frontend_themes_ok,
+          "CONFLICTO" if status.frontend_themes_conflict else "FALTA")
+    if status.frontend_themes_detail and not status.frontend_themes_ok:
+        body.append(f"  {status.frontend_themes_detail}\n", style="bold yellow")
+    _flag(f"Tema por defecto = {THEME_NAME}", status.default_theme_set,
+          f"ACTUAL: {status.default_theme or 'nativo'}")
+
+    table = Table(box=box.SIMPLE, show_header=True, header_style="label", padding=(0, 1))
+    table.add_column("Grupo")
+    table.add_column("Estándar")
+    table.add_column("En equipo")
+    for label, var, color in HISTORY_COLORS:
+        current = status.colors.get(var, "")
+        table.add_row(
+            label,
+            Text.assemble(("██ ", color), color),
+            Text.assemble(("██ ", current), current) if current else Text("—", style="dim"),
+        )
+
+    if status.error:
+        body.append(f"\n{status.error}\n", style="bold red")
+
+    console.print(
+        Panel(Group(body, table), border_style=border, box=box.ROUNDED, padding=(1, 2))
+    )
 
 
 def panel_yaml_content(content: str, path: str, max_lines: int = 400) -> None:

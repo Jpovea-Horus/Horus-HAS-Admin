@@ -64,6 +64,7 @@ a = Analysis(
                 "mqtt_manager",
                 "ha_users_manager",
                 "ha_config_manager",
+                "ha_theme_manager",
                 "plugin_service_manager",
                 "ha_integration_manager",
                 "hacs_manager",

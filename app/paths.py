@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 
 APP_NAME = "Gestor Nexxo 800"
@@ -19,6 +20,31 @@ def get_executable_dir():
 # Rutas Locales
 BASE_PATH = get_base_path()
 EXE_DIR = get_executable_dir()
+
+
+def get_user_data_dir() -> str:
+    """Datos locales del usuario: huellas SSH, historial (override con HAS_DATA_DIR)."""
+    env_dir = (os.environ.get("HAS_DATA_DIR") or "").strip()
+    base = env_dir or os.path.join(
+        os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), APP_NAME
+    )
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+USER_DATA_DIR = get_user_data_dir()
+
+
+def user_data_file(name: str) -> str:
+    """Ruta en USER_DATA_DIR; migra el archivo antiguo desde EXE_DIR si existe."""
+    new_path = os.path.join(USER_DATA_DIR, name)
+    old_path = os.path.join(EXE_DIR, name)
+    if not os.path.exists(new_path) and os.path.isfile(old_path):
+        try:
+            shutil.move(old_path, new_path)
+        except OSError:
+            return old_path
+    return new_path
 
 INTEGRATION_ADMIN_NETWORK = "admin_network"
 INTEGRATION_HELPER = "helper_manager"

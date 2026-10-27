@@ -19,6 +19,7 @@ from cellular_manager import CellularManager
 from cloudflare_manager import CloudflareManager
 from exceptions import SSHCommandError
 from ha_config_manager import HaConfigManager
+from ha_theme_manager import HaThemeManager
 from ha_users_manager import HaUsersManager
 from hacs_manager import HacsManager
 from hostname_manager import HostnameManager
@@ -37,6 +38,7 @@ from models import (
     CellularStatus,
     SystemHealthStatus,
     HaConfigurationStatus,
+    HaThemeStatus,
     HacsStatus,
     HaUser,
     HaUsersStatus,
@@ -87,6 +89,7 @@ class HasControllerAPI:
         self.admin_network_host = AdminNetworkHostManager(self.ssh)
         self.debian_repair = DebianRepairManager(self.ssh)
         self.ha_config = HaConfigManager(self.ssh)
+        self.ha_theme = HaThemeManager(self.ssh, self.ha_config)
         self.hacs = HacsManager(self.ssh, self.ha_config)
         self.self_heal = SelfHealManager(self.ssh, self.ha_config)
         self.cloudflare = CloudflareManager(self.ssh)
@@ -395,6 +398,20 @@ class HasControllerAPI:
         return self.ha_config.delete_ha_yaml_file(
             filename, recreate_config=recreate_config
         )
+
+    def get_ha_theme_status(self) -> HaThemeStatus:
+        return self.ha_theme.get_status()
+
+    def apply_ha_theme(self, set_default: bool = True) -> str:
+        """Escribe el tema Horus (colores del historial) y lo fija por defecto."""
+        return self.ha_theme.apply(set_default=set_default)
+
+    def remove_ha_theme(self) -> str:
+        return self.ha_theme.remove()
+
+    def get_ha_theme_yaml(self) -> tuple[str, str]:
+        """Devuelve (path, contenido) de themes/horus_theme.yaml."""
+        return self.ha_theme.get_theme_yaml()
 
     def disable_mqtt_zwave(self) -> str:
         return self.mqtt.disable_mqtt()
