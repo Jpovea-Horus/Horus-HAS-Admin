@@ -27,9 +27,9 @@ if %errorlevel% neq 0 (
 )
 
 :start_build
-%PY% -m pip install -r requirements.txt -q
+%PY% -m pip install -r requisitos_previos\requirements.txt -q
 %PY% -m pip install pyinstaller -q
-%PY% -m PyInstaller Horus_HAS_Admin.spec --noconfirm --clean
+%PY% -m PyInstaller Gestor_Nexxo_800.spec --noconfirm --clean
 
 if %errorlevel% neq 0 (
     echo  [ERROR] Fallo la compilacion.

@@ -367,6 +367,78 @@ class HorusJobResult:
 
 
 @dataclass
+class HaUpdateProfile:
+    """Par HA + Z-Wave JS UI a instalar (validado en campo o 'última' sin validar)."""
+
+    id: str
+    ha: str
+    zwave_js_ui: str
+    label: str = ""
+    validated: str = ""
+    notes: str = ""
+    recommended: bool = False
+    source: str = "builtin"  # builtin | local | latest
+
+    @property
+    def is_validated(self) -> bool:
+        return self.source != "latest"
+
+    @property
+    def title(self) -> str:
+        return self.label or f"HA {self.ha} + Z-Wave JS UI {self.zwave_js_ui}"
+
+
+@dataclass
+class HaUpdateStatus:
+    """Estado del controlador antes/después de actualizar HA y Z-Wave JS UI."""
+
+    compose_file: str = ""
+    compose_cmd: str = ""
+    compose_image: str = ""
+    ha_container: str = ""
+    ha_image_id: str = ""
+    ha_image_mb: int = 0
+    ha_version: str = ""
+    arch: str = ""
+    zwave_version: str = ""
+    zwave_active: bool = False
+    zwave_exec: str = ""
+    zwave_global: bool = True
+    node_version: str = ""
+    free_mb: int = 0
+    used_pct: int = 0
+    db_mb: int = 0
+
+    @property
+    def free_after_rm_mb(self) -> int:
+        return self.free_mb + self.ha_image_mb
+
+
+@dataclass
+class HaUpdatePlan:
+    """Resultado de la verificación previa de un perfil contra el controlador."""
+
+    profile: HaUpdateProfile
+    status: HaUpdateStatus
+    new_image: str = ""
+    new_compose: str = ""
+    zwave_node_req: str = ""
+    update_ha: bool = True
+    update_zwave: bool = True
+    is_downgrade: bool = False
+    blockers: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.blockers
+
+    @property
+    def nothing_to_do(self) -> bool:
+        return not self.update_ha and not self.update_zwave
+
+
+@dataclass
 class HaIntegrationStatus:
     """Estado de un custom component en /config/custom_components."""
 

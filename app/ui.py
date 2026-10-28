@@ -85,7 +85,7 @@ def banner() -> None:
     console.print(
         Panel(
             Text.from_markup(
-                f"[title]      {APP_NAME}      [/title]\n"
+                f"[accent]👁[/accent] [title]      {APP_NAME}      [/title] [accent]👁[/accent]\n"
                 "[subtitle]Instalación y configuración integral[/subtitle]\n"
                 f"[dim]v{APP_VERSION} · Red · HA · ZeroTier · Diagnóstico[/dim]"
             ),

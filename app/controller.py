@@ -1,5 +1,5 @@
 """
-Fachada principal de la API — Horus HAS Admin.
+Fachada principal de la API — Gestor Nexxo 800.
 
 Uso programático:
     api = HasControllerAPI()
@@ -20,6 +20,7 @@ from cloudflare_manager import CloudflareManager
 from exceptions import SSHCommandError
 from ha_config_manager import HaConfigManager
 from ha_theme_manager import HaThemeManager
+from ha_update_manager import HaUpdateManager
 from ha_users_manager import HaUsersManager
 from hacs_manager import HacsManager
 from hostname_manager import HostnameManager
@@ -39,6 +40,9 @@ from models import (
     SystemHealthStatus,
     HaConfigurationStatus,
     HaThemeStatus,
+    HaUpdatePlan,
+    HaUpdateProfile,
+    HaUpdateStatus,
     HacsStatus,
     HaUser,
     HaUsersStatus,
@@ -96,6 +100,7 @@ class HasControllerAPI:
         self.backups = BackupManager(self.ssh)
         self.horus_backup = RemoteBackupManager(self.ssh, self.ha_config, self.self_heal)
         self.maintenance = MaintenanceManager(self.ssh)
+        self.ha_update = HaUpdateManager(self.ssh, self.maintenance, self.horus_backup)
         self.support = SupportManager(self.ssh, self.ha_config, self.self_heal)
         self._session: Optional[SessionInfo] = None
 
@@ -635,3 +640,24 @@ class HasControllerAPI:
 
     def delete_custom_component(self, name: str) -> str:
         return self.maintenance.delete_custom_component(name)
+
+    def get_ha_update_status(self) -> HaUpdateStatus:
+        return self.ha_update.get_status()
+
+    def plan_ha_update(self, profile: HaUpdateProfile, update_zwave: bool = True) -> HaUpdatePlan:
+        return self.ha_update.plan(profile, update_zwave=update_zwave)
+
+    def ha_update_cleanup(self) -> str:
+        return self.ha_update.cleanup()
+
+    def run_ha_update(self, plan: HaUpdatePlan, on_phase=None) -> HorusJobResult:
+        return self.ha_update.run(plan, on_phase=on_phase)
+
+    def ha_update_profile_from_controller(self) -> HaUpdateProfile:
+        return self.ha_update.profile_from_controller()
+
+    def ha_update_latest_profile(self) -> HaUpdateProfile:
+        return self.ha_update.latest_profile()
+
+    def get_zwave_log_issues(self, container: str = "") -> list[str]:
+        return self.ha_update.zwave_log_issues(container)

@@ -15,11 +15,13 @@ block_cipher = None
 _paramiko_datas, _paramiko_binaries, _paramiko_hidden = collect_all("paramiko")
 _rich_datas, _rich_binaries, _rich_hidden = collect_all("rich")
 
-extra_datas = [
-    (ICON_PATH, "assets"),
-    (os.path.join(SPEC_DIR, "cloudflared.exe"), "."),
-    (os.path.join(SPEC_DIR, "plugin_serviceV2"), "plugin_serviceV2"),
-]
+extra_datas = [(ICON_PATH, "assets")]
+cloudflared_src = os.path.join(SPEC_DIR, "cloudflared.exe")
+plugin_v2_src = os.path.join(SPEC_DIR, "plugin_serviceV2")
+if os.path.isfile(cloudflared_src):
+    extra_datas.append((cloudflared_src, "."))
+if os.path.isdir(plugin_v2_src):
+    extra_datas.append((plugin_v2_src, "plugin_serviceV2"))
 admin_network_src = os.path.join(INTEGRATIONS_SRC, "admin_network")
 helper_cc = os.path.join(INTEGRATIONS_SRC, "helper_manager", "custom_components")
 zwave_panel_src = os.path.join(INTEGRATIONS_SRC, "panel_zwave_js_ui")
@@ -72,6 +74,9 @@ a = Analysis(
                 "zwave_panel_manager",
                 "backup_manager",
                 "remote_backup_manager",
+                "ha_compat",
+                "ha_profiles",
+                "ha_update_manager",
                 "support_manager",
                 "updater",
                 "menus",
@@ -80,6 +85,7 @@ a = Analysis(
                 "menus.ha",
                 "menus.backup",
                 "menus.horus_backup",
+                "menus.ha_update",
                 "menus.remote",
                 "menus.diagnostics",
             ],

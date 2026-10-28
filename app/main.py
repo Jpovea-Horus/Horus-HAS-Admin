@@ -112,7 +112,7 @@ def main_menu(api: HasControllerAPI) -> str:
                 ("4", "Conexión remota (ZeroTier / Cloudflare)"),
                 ("", ""),
                 ("", "[dim]Sistema[/dim]"),
-                ("5", "Home Assistant (usuarios, configuración, integraciones)"),
+                ("5", "Home Assistant (user, config, integ, update)"),
                 ("6", "Backups y espacio en disco"),
                 ("7", "Hostname del controlador"),
                 ("", ""),

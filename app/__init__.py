@@ -1,5 +1,5 @@
 """
-Horus HAS Admin — administración de controladores HAS vía SSH.
+Gestor Nexxo 800 — administración de controladores HAS vía SSH.
 
 Módulos: red (Ethernet/Wi-Fi), hostname, usuarios HA, ZeroTier.
 """

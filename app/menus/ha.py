@@ -1304,6 +1304,7 @@ def menu_ha_admin(api: HasControllerAPI) -> None:
                 ("1", "Usuarios (crear / editar / eliminar / Owner / Personas)"),
                 ("2", "Configuración HTTP, Proxy y Discovery"),
                 ("3", "Gestor de Integraciones (energy, red, auxiliares, zwave)"),
+                ("4", "Actualizar Home Assistant + Z-Wave JS UI (versiones validadas)"),
                 ("", ""),
                 ("0", "Volver al menú principal"),
             ],
@@ -1318,5 +1319,9 @@ def menu_ha_admin(api: HasControllerAPI) -> None:
             menu_ha_configuration(api)
         elif op == "3":
             menu_ha_integrations(api)
+        elif op == "4":
+            from menus.ha_update import menu_ha_update
+
+            menu_ha_update(api)
         else:
             warning("Opción no válida.")
