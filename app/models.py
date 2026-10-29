@@ -529,6 +529,25 @@ class DebianRepairStatus:
 
 
 @dataclass
+class ClockStatus:
+    """Hora del controlador frente a la del PC, NTP y zona horaria."""
+
+    remote_epoch: int = 0
+    local_epoch: int = 0
+    drift_s: int = 0
+    remote_time: str = ""
+    pc_time: str = ""
+    timezone: str = ""
+    ntp_enabled: str = ""
+    ntp_synced: str = ""
+    sync_service: str = ""
+    has_rtc: bool = False
+    rtc_time: str = ""
+    needs_fix: bool = False
+    error: str = ""
+
+
+@dataclass
 class ZwavePanelStatus:
     """Estado del panel lateral Z-Wave JS UI (www + panel_custom)."""
 

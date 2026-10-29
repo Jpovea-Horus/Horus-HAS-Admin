@@ -12,6 +12,7 @@ from ui import (
     info,
     menu_options,
     panel_cellular,
+    panel_clock,
     panel_cloudflare,
     panel_debian_repair,
     panel_mqtt_diagnostic,
@@ -20,6 +21,7 @@ from ui import (
     section,
     success,
     warning,
+    working,
 )
 
 
@@ -464,6 +466,76 @@ def menu_self_heal(api: HasControllerAPI) -> None:
             error(str(exc))
 
 
+def menu_clock(api: HasControllerAPI) -> None:
+    """Revisión y corrección de la hora del controlador."""
+    from rich.panel import Panel
+
+    while True:
+        section("Corrección: Reloj / NTP")
+        try:
+            with working("Leyendo hora del controlador…"):
+                status = api.get_clock_status()
+        except HasApiError as exc:
+            error(str(exc))
+            break
+
+        panel_clock(status)
+        if status.needs_fix:
+            warning("La hora no está sincronizada o tiene desfase: se recomienda la opción 2.")
+        else:
+            success("Hora correcta y NTP sincronizado.")
+
+        menu_options(
+            "Acciones reloj",
+            [
+                ("1", "Actualizar estado"),
+                ("2", "Corrección automática (NTP; si falla, hora de este PC)"),
+                ("3", "Sincronizar solo por NTP (requiere internet)"),
+                ("4", "Ajustar con la hora de este PC"),
+                ("5", "Cambiar zona horaria"),
+                ("", ""),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                continue
+            if op == "2":
+                if not confirm("¿Corregir la hora del controlador?", default=True):
+                    continue
+                with working("Sincronizando hora (hasta 30 s)…"):
+                    result = api.auto_fix_clock()
+                console.print(Panel(result, title="Corrección de hora", border_style="green"))
+            elif op == "3":
+                with working("Sincronizando por NTP (hasta 30 s)…"):
+                    ok, out = api.sync_clock_ntp()
+                console.print(
+                    Panel(out, title="NTP", border_style="green" if ok else "yellow")
+                )
+                if ok:
+                    success("Hora sincronizada por NTP.")
+                else:
+                    warning("NTP no sincronizó. Revise internet / UDP 123 o use la opción 4.")
+            elif op == "4":
+                warning("Se copiará la hora de este PC: verifique que la hora del PC sea correcta.")
+                if confirm("¿Ajustar la hora del controlador con la de este PC?", default=True):
+                    success(api.set_clock_from_pc())
+            elif op == "5":
+                info("Ejemplos: America/Bogota, America/Lima, America/Mexico_City, America/Santiago")
+                info("Nota: Home Assistant tiene su propia zona horaria en su configuración general.")
+                tz = ask("Zona horaria", default=status.timezone or "America/Bogota")
+                if tz and tz != status.timezone:
+                    success(api.set_timezone(tz))
+            else:
+                warning("Opción no válida.")
+        except HasApiError as exc:
+            error(str(exc))
+        ask("Pulse Enter para continuar")
+
+
 def menu_error_correction(api: HasControllerAPI) -> None:
     while True:
         section("Modo Corrección de errores")
@@ -476,6 +548,7 @@ def menu_error_correction(api: HasControllerAPI) -> None:
                 ("4", "HA / Z-Wave Self-Heal - Diagnóstico y reparación automática HA ↔ Z-Wave"),
                 ("5", "Reparar registro HA (Fix Registry/Integraciones) - Soluciona errores en la base de datos de integraciones"),
                 ("6", "Limpiar residuos de Base de Datos (Fix Historial) - Arregla historiales que no cargan"),
+                ("7", "Reloj / NTP - Revisar y corregir la hora del controlador"),
                 ("", ""),
                 ("0", "Volver al menú principal"),
             ],
@@ -515,5 +588,7 @@ def menu_error_correction(api: HasControllerAPI) -> None:
                     success(api.clean_ha_db_wal(restart=True))
                 except HasApiError as exc:
                     error(str(exc))
+        elif op == "7":
+            menu_clock(api)
         else:
             warning("Opción no válida.")

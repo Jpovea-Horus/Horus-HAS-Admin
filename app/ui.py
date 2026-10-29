@@ -23,6 +23,7 @@ from rich.live import Live
 from models import (
     BackupManagerStatus,
     CellularStatus,
+    ClockStatus,
     DebianRepairStatus,
     HaConfigurationStatus,
     HaThemeStatus,
@@ -85,7 +86,7 @@ def banner() -> None:
     console.print(
         Panel(
             Text.from_markup(
-                f"[accent]👁[/accent] [title]      {APP_NAME}      [/title] [accent]👁[/accent]\n"
+                f"[accent]🏠[/accent] [title]      {APP_NAME}      [/title] [accent]🏠[/accent]\n"
                 "[subtitle]Instalación y configuración integral[/subtitle]\n"
                 f"[dim]v{APP_VERSION} · Red · HA · ZeroTier · Diagnóstico[/dim]"
             ),
@@ -1394,6 +1395,49 @@ def panel_debian_repair(status: DebianRepairStatus) -> None:
                 box=box.ROUNDED,
             )
         )
+
+
+def panel_clock(status: ClockStatus) -> None:
+    """Hora del controlador vs PC, NTP y zona horaria."""
+    if status.error:
+        border = "red"
+    elif status.needs_fix:
+        border = "yellow"
+    else:
+        border = "green"
+
+    body = Text()
+    body.append("RELOJ / NTP\n", style="bold underline")
+    body.append("-----------\n")
+    body.append("Controlador: ", style="info")
+    body.append(f"{status.remote_time or '?'}\n", style="value")
+    body.append("Este PC:     ", style="info")
+    body.append(f"{status.pc_time or '?'}\n", style="dim")
+    body.append("Desfase:     ", style="info")
+    drift_style = "success" if abs(status.drift_s) <= 30 else "bold red"
+    body.append(f"{status.drift_s:+d} s\n", style=drift_style)
+    body.append("Zona horaria: ", style="info")
+    body.append(f"{status.timezone or '?'}\n", style="dim")
+
+    body.append("NTP activado: ", style="info")
+    body.append(
+        f"{status.ntp_enabled or '?'}\n",
+        style="success" if status.ntp_enabled == "yes" else "bold yellow",
+    )
+    body.append("NTP sincronizado: ", style="info")
+    body.append(
+        f"{status.ntp_synced or '?'}\n",
+        style="success" if status.ntp_synced == "yes" else "bold yellow",
+    )
+    body.append("Servicio: ", style="info")
+    body.append(f"{status.sync_service or 'ninguno activo'}\n", style="dim")
+    body.append("Reloj hardware (RTC): ", style="info")
+    body.append(f"{status.rtc_time if status.has_rtc else 'no detectado'}\n", style="dim")
+
+    if status.error:
+        body.append(f"\n{status.error}\n", style="bold red")
+
+    console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
 
 
 def panel_system_health(status: SystemHealthStatus) -> None:

@@ -28,6 +28,7 @@ from mqtt_manager import MqttManager
 from plugin_service_manager import PluginServiceManager
 from ha_integration_manager import HaIntegrationManager
 from admin_network_host_manager import AdminNetworkHostManager
+from clock_manager import ClockManager
 from debian_repair_manager import DebianRepairManager
 from remote_backup_manager import RemoteBackupManager
 from self_heal_manager import SelfHealManager
@@ -37,6 +38,7 @@ from models import (
     BackupEntry,
     BackupManagerStatus,
     CellularStatus,
+    ClockStatus,
     SystemHealthStatus,
     HaConfigurationStatus,
     HaThemeStatus,
@@ -92,6 +94,7 @@ class HasControllerAPI:
         self.zwave_panel = ZwavePanelManager(self.ssh)
         self.admin_network_host = AdminNetworkHostManager(self.ssh)
         self.debian_repair = DebianRepairManager(self.ssh)
+        self.clock = ClockManager(self.ssh)
         self.ha_config = HaConfigManager(self.ssh)
         self.ha_theme = HaThemeManager(self.ssh, self.ha_config)
         self.hacs = HacsManager(self.ssh, self.ha_config)
@@ -333,6 +336,21 @@ class HasControllerAPI:
 
     def run_debian_repair_full(self) -> str:
         return self.debian_repair.run_full_repair()
+
+    def get_clock_status(self) -> ClockStatus:
+        return self.clock.get_status()
+
+    def sync_clock_ntp(self) -> tuple[bool, str]:
+        return self.clock.sync_ntp()
+
+    def set_clock_from_pc(self) -> str:
+        return self.clock.set_from_pc()
+
+    def auto_fix_clock(self) -> str:
+        return self.clock.auto_fix()
+
+    def set_timezone(self, tz: str) -> str:
+        return self.clock.set_timezone(tz)
 
     def get_helper_manager_status(self) -> HaIntegrationStatus:
         return self.helper_manager.get_status()
