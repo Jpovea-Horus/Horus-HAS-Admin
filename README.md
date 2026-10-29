@@ -47,7 +47,7 @@ py app\main.py
 2. Copiar **`dist/Gestor Nexxo 800.exe`** a USB o escritorio
 3. Doble clic en el `.exe` (no requiere Python)
 
-Junto al `.exe` se crean (si aplica):
+En `%LOCALAPPDATA%\Gestor Nexxo 800\` se crean (si aplica):
 
 - `session_hosts.json` — últimos hosts (usuario + LAN/CF, **sin contraseña**)
 - `ssh_known_hosts` — huellas SSH (TOFU: primera conexión se guarda; si cambia, se bloquea)
@@ -70,10 +70,13 @@ En el menú principal, **C** cambia de controlador o reconecta (útil tras IP es
 1. Estado de red  
 2. Ethernet (DHCP / estática)  
 3. Wi-Fi  
-4. Administrativa → hostname + Home Assistant (usuarios, backups, mantenimiento, `plugin_service`, `configuration.yaml`, Admin Network, Helper Manager)  
-5. Conexión remota (ZeroTier, Cloudflare en el controlador)  
-6. Diagnóstico (htop + disco/memoria/`systemctl --failed`)  
-7. Corrección (cellular up/down, MQTT Z-Wave JS UI)
+4. Conexión remota (ZeroTier, Cloudflare en el controlador)  
+5. Home Assistant (usuarios, `configuration.yaml`, integraciones, actualización)  
+6. Backups y espacio en disco  
+7. Hostname del controlador  
+8. Diagnóstico (semáforo, logs, pruebas de red)  
+9. Corrección de errores (cellular, MQTT, APT/venv, Self-Heal, registro HA, DB, **Reloj / NTP**)  
+I. Informe de soporte (ZIP + HTML)
 
 `plugin_service`: verificar / eliminar / instalar local o GitHub / **reiniciar HA**.
 
