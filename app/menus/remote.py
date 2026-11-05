@@ -28,7 +28,8 @@ from ui import (
 def menu_cloudflare_remote(api: HasControllerAPI) -> None:
     while True:
         section("Cloudflare Tunnel (Remoto)")
-        status = api.get_cloudflare_status()
+        with working("Verificando Cloudflare Tunnel…"):
+            status = api.get_cloudflare_status()
         panel_cloudflare(status)
 
         opts = [("1", "Actualizar estado")]
@@ -53,20 +54,20 @@ def menu_cloudflare_remote(api: HasControllerAPI) -> None:
                     ".storage/http (stable, no pending). Home Assistant se reiniciará."
                 )
                 if confirm("¿Desea instalar cloudflared en el controlador?", default=False):
-                    info("Instalando cloudflared y aplicando trusted_proxies…")
-                    success(api.install_cloudflare())
+                    with working("Instalando cloudflared y aplicando trusted_proxies…"):
+                        success(api.install_cloudflare())
             elif op == "3" and status.installed:
                 if confirm("¿Desea eliminar cloudflared del controlador?", default=False):
-                    info("Eliminando cloudflared...")
-                    success(api.remove_cloudflare())
+                    with working("Eliminando cloudflared…"):
+                        success(api.remove_cloudflare())
             elif op == "4":
                 warning(
                     "Se escribirá use_x_forwarded_for + 127.0.0.1/::1 en stable "
                     "y se reiniciará HA. No hace falta entrar a la UI."
                 )
                 if confirm("¿Aplicar trusted_proxies y reiniciar Home Assistant?", default=True):
-                    info("Escribiendo .storage/http y reiniciando HA…")
-                    success(api.ensure_ha_trusted_proxies(restart=True))
+                    with working("Escribiendo .storage/http y reiniciando HA…"):
+                        success(api.ensure_ha_trusted_proxies(restart=True))
             else:
                 warning("Opción no válida.")
         except Exception as exc:
@@ -75,16 +76,18 @@ def menu_cloudflare_remote(api: HasControllerAPI) -> None:
 
 def menu_zerotier(api: HasControllerAPI) -> None:
     section("ZeroTier")
-    zt = api.check_zerotier()
+    with working("Verificando ZeroTier…"):
+        zt = api.check_zerotier()
     panel_zerotier(zt)
 
     if not zt.installed:
         if confirm("¿Desea instalar ZeroTier?", default=False):
             try:
-                info("Iniciando instalación de ZeroTier…")
-                api.install_zerotier()
+                with working("Iniciando instalación de ZeroTier…"):
+                    api.install_zerotier()
                 success("ZeroTier instalado correctamente.")
-                zt = api.check_zerotier()
+                with working("Verificando ZeroTier…"):
+                    zt = api.check_zerotier()
                 panel_zerotier(zt)
             except HasApiError as exc:
                 error(f"Fallo en la instalación: {exc}")
@@ -110,8 +113,8 @@ def menu_zerotier(api: HasControllerAPI) -> None:
             if len(nwid) != 16:
                 warning("El Network ID debe tener exactamente 16 caracteres.")
                 return
-            info(f"Uniéndose a la red {nwid}…")
-            api.join_zerotier_network(nwid)
+            with working(f"Uniéndose a la red {nwid}…"):
+                api.join_zerotier_network(nwid)
             success("Petición de unión enviada. Recuerde autorizar el nodo en el panel de ZeroTier.")
         elif op == "2":
             if zt.networks:
@@ -134,9 +137,11 @@ def menu_zerotier(api: HasControllerAPI) -> None:
                     warning("El Network ID debe tener exactamente 16 caracteres.")
                     return
             if confirm(f"¿Salir de la red {nwid}?", default=False):
-                success(api.leave_zerotier_network(nwid))
+                with working("Saliendo de la red ZeroTier…"):
+                    success(api.leave_zerotier_network(nwid))
         elif op == "3":
-            zt = api.check_zerotier()
+            with working("Verificando ZeroTier…"):
+                zt = api.check_zerotier()
             panel_zerotier(zt)
     except HasApiError as exc:
         error(str(exc))
@@ -145,7 +150,8 @@ def menu_zerotier(api: HasControllerAPI) -> None:
 def menu_cellular(api: HasControllerAPI) -> None:
     while True:
         section("MÓDULO CELULAR / LTE")
-        status = api.get_cellular_status()
+        with working("Verificando módulo celular…"):
+            status = api.get_cellular_status()
         panel_cellular(status)
 
         menu_options(
@@ -170,15 +176,15 @@ def menu_cellular(api: HasControllerAPI) -> None:
                     "(como en el informe ZW855)."
                 )
                 if confirm("¿Dar de baja al servicio celular?", default=False):
-                    info("Dando de baja cellular.service…")
-                    success(api.take_down_cellular_service())
+                    with working("Dando de baja cellular.service…"):
+                        success(api.take_down_cellular_service())
             elif op == "2":
                 if status.is_active and status.is_enabled:
                     info("El servicio ya está activo y habilitado.")
                     continue
                 if confirm("¿Habilitar e iniciar cellular.service?", default=False):
-                    info("Reactivando cellular.service…")
-                    success(api.bring_up_cellular_service())
+                    with working("Reactivando cellular.service…"):
+                        success(api.bring_up_cellular_service())
             else:
                 warning("Opción no válida.")
         except HasApiError as exc:
@@ -188,9 +194,9 @@ def menu_cellular(api: HasControllerAPI) -> None:
 def menu_mqtt(api: HasControllerAPI) -> None:
     while True:
         section("Conexión MQTT — Z-Wave JS UI")
-        info("Ejecutando diagnóstico (runbook Horus)…")
         try:
-            status = api.get_mqtt_diagnostic()
+            with working("Ejecutando diagnóstico MQTT (runbook Horus)…"):
+                status = api.get_mqtt_diagnostic()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -224,9 +230,10 @@ def menu_mqtt(api: HasControllerAPI) -> None:
                 if status.recommended_action == "restart_required":
                     warning(status.action_detail)
                     if confirm(f"¿Reiniciar {status.service_name} ahora?", default=True):
-                        info("Reiniciando servicio…")
-                        success(api.restart_mqtt_zwave_service())
-                        status = api.get_mqtt_diagnostic()
+                        with working("Reiniciando servicio…"):
+                            success(api.restart_mqtt_zwave_service())
+                        with working("Ejecutando diagnóstico MQTT…"):
+                            status = api.get_mqtt_diagnostic()
                         panel_mqtt_diagnostic(status)
                     continue
                 if status.recommended_action == "audit_auth":
@@ -252,10 +259,10 @@ def menu_mqtt(api: HasControllerAPI) -> None:
                     if not confirm("¿Deshabilitar módulo MQTT?", default=False):
                         continue
 
-                info("Aplicando corrección…")
-                success(api.disable_mqtt_zwave())
-                info("Actualizando diagnóstico post-corrección…")
-                status = api.get_mqtt_diagnostic()
+                with working("Aplicando corrección…"):
+                    success(api.disable_mqtt_zwave())
+                with working("Actualizando diagnóstico post-corrección…"):
+                    status = api.get_mqtt_diagnostic()
                 panel_mqtt_diagnostic(status)
             else:
                 warning("Opción no válida.")
@@ -294,7 +301,8 @@ def menu_debian_apt_venv_repair(api: HasControllerAPI) -> None:
     while True:
         section("Corrección: APT + Python venv (Debian 11)")
         try:
-            status = api.get_debian_repair_status()
+            with working("Analizando APT / venv…"):
+                status = api.get_debian_repair_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -339,8 +347,8 @@ def menu_debian_apt_venv_repair(api: HasControllerAPI) -> None:
                 )
                 if not confirm("¿Ejecutar reparación completa?", default=False):
                     continue
-                info("Ejecutando pasos 1→6 (puede tardar varios minutos)…")
-                result = api.run_debian_repair_full()
+                with working("Ejecutando pasos 1→6 (puede tardar varios minutos)…"):
+                    result = api.run_debian_repair_full()
                 console.print(
                     Panel(result, title="Logs reparación completa", border_style="green")
                 )
@@ -375,8 +383,8 @@ def menu_debian_apt_venv_repair(api: HasControllerAPI) -> None:
                 if not confirm(labels[step], default=default_ok):
                     continue
 
-            info(f"Ejecutando paso {step}…")
-            result = api.run_debian_repair_step(step)
+            with working(f"Ejecutando paso {step}…"):
+                result = api.run_debian_repair_step(step)
             console.print(
                 Panel(result, title=f"Logs paso {step}", border_style="cyan")
             )
@@ -389,9 +397,9 @@ def menu_debian_apt_venv_repair(api: HasControllerAPI) -> None:
 def menu_self_heal(api: HasControllerAPI) -> None:
     while True:
         section("HA / Z-Wave — Self-Heal")
-        info("Ejecutando diagnóstico…")
         try:
-            status = api.get_self_heal_status()
+            with working("Ejecutando diagnóstico HA / Z-Wave…"):
+                status = api.get_self_heal_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -428,38 +436,40 @@ def menu_self_heal(api: HasControllerAPI) -> None:
                     default=True,
                 ):
                     continue
-                info("Aplicando reparación…")
-                success(api.run_self_heal())
-                status = api.get_self_heal_status()
+                with working("Aplicando reparación…"):
+                    success(api.run_self_heal())
+                with working("Ejecutando diagnóstico HA / Z-Wave…"):
+                    status = api.get_self_heal_status()
                 panel_self_heal(status)
             elif op == "3":
                 if confirm("¿Reiniciar servicio Z-Wave?", default=True):
-                    info("Reiniciando…")
-                    success(api.restart_zwave_service())
+                    with working("Reiniciando servicio…"):
+                        success(api.restart_zwave_service())
             elif op == "4":
                 if confirm(
                     "¿Detener HA, fijar URL ws://127.0.0.1:3000 e iniciar?",
                     default=True,
                 ):
-                    info("Corrigiendo URL…")
-                    success(api.fix_zwave_ws_url(restart=True))
+                    with working("Corrigiendo URL…"):
+                        success(api.fix_zwave_ws_url(restart=True))
             elif op == "5":
                 if confirm("¿Reparar discovery_keys y reiniciar HA?", default=True):
-                    info("Reparando schema…")
-                    success(api.repair_ha_config_entries())
-                    success(api.restart_ha())
+                    with working("Reparando schema…"):
+                        success(api.repair_ha_config_entries())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             elif op == "6":
                 warning(
                     "Se detendrá HA y se moverán solo -shm/-wal (con backup). "
                     "No se borra home-assistant_v2.db."
                 )
                 if confirm("¿Continuar?", default=False):
-                    info("Limpiando residuos DB…")
-                    success(api.clean_ha_db_wal(restart=True))
+                    with working("Limpiando residuos DB…"):
+                        success(api.clean_ha_db_wal(restart=True))
             elif op == "7":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             else:
                 warning("Opción no válida.")
         except HasApiError as exc:
@@ -522,13 +532,15 @@ def menu_clock(api: HasControllerAPI) -> None:
             elif op == "4":
                 warning("Se copiará la hora de este PC: verifique que la hora del PC sea correcta.")
                 if confirm("¿Ajustar la hora del controlador con la de este PC?", default=True):
-                    success(api.set_clock_from_pc())
+                    with working("Ajustando hora desde este PC…"):
+                        success(api.set_clock_from_pc())
             elif op == "5":
                 info("Ejemplos: America/Bogota, America/Lima, America/Mexico_City, America/Santiago")
                 info("Nota: Home Assistant tiene su propia zona horaria en su configuración general.")
                 tz = ask("Zona horaria", default=status.timezone or "America/Bogota")
                 if tz and tz != status.timezone:
-                    success(api.set_timezone(tz))
+                    with working("Cambiando zona horaria…"):
+                        success(api.set_timezone(tz))
             else:
                 warning("Opción no válida.")
         except HasApiError as exc:
@@ -571,10 +583,10 @@ def menu_error_correction(api: HasControllerAPI) -> None:
             )
             if confirm("¿Reparar registro de integraciones y reiniciar HA?", default=True):
                 try:
-                    info("Reparando schema de core.config_entries…")
-                    success(api.repair_ha_config_entries())
-                    info("Reiniciando Home Assistant para aplicar cambios…")
-                    success(api.restart_ha())
+                    with working("Reparando schema de core.config_entries…"):
+                        success(api.repair_ha_config_entries())
+                    with working("Reiniciando Home Assistant para aplicar cambios…"):
+                        success(api.restart_ha())
                 except HasApiError as exc:
                     error(str(exc))
         elif op == "6":
@@ -584,8 +596,8 @@ def menu_error_correction(api: HasControllerAPI) -> None:
             )
             if confirm("¿Limpiar residuos de base de datos y reiniciar HA?", default=True):
                 try:
-                    info("Limpiando residuos DB…")
-                    success(api.clean_ha_db_wal(restart=True))
+                    with working("Limpiando residuos DB…"):
+                        success(api.clean_ha_db_wal(restart=True))
                 except HasApiError as exc:
                     error(str(exc))
         elif op == "7":

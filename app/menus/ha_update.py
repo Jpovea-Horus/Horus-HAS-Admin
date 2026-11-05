@@ -65,7 +65,8 @@ def _show_plan(plan: HaUpdatePlan) -> None:
 def _free_space_with_backups(api: HasControllerAPI) -> bool:
     """Procedimiento: con < 500 MB libres, borrar config_backup_* si existen."""
     try:
-        backups = [b for b in api.list_backups() if b.kind == "ha"]
+        with working("Buscando backups…"):
+            backups = [b for b in api.list_backups() if b.kind == "ha"]
     except HasApiError:
         backups = []
     if not backups:
@@ -75,7 +76,8 @@ def _free_space_with_backups(api: HasControllerAPI) -> bool:
     if not confirm("¿Eliminarlos para liberar espacio?", default=True):
         return False
     for b in backups:
-        success(api.delete_backup(b.path))
+        with working("Eliminando backup…"):
+            success(api.delete_backup(b.path))
     return True
 
 
@@ -162,7 +164,8 @@ def _run_profile(api: HasControllerAPI, profile: HaUpdateProfile, st: HaUpdateSt
         info("Cancelado.")
         return
 
-    result = api.run_ha_update(plan, on_phase=_phase)
+    with working("Actualizando Home Assistant / Z-Wave JS UI…"):
+        result = api.run_ha_update(plan, on_phase=_phase)
     if not result.ok:
         _report_failure(result)
         return

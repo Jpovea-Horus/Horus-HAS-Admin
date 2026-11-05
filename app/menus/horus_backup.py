@@ -34,6 +34,7 @@ from ui import (
     table_horus_archives,
     table_horus_snapshots,
     warning,
+    working,
 )
 
 T = TypeVar("T")
@@ -68,7 +69,7 @@ def _report_failure(result: HorusJobResult) -> None:
 
 
 def _check_health(api: HasControllerAPI, need_ha: bool, need_zwave: bool) -> bool:
-    with console.status("Esperando a que Home Assistant y Z-Wave respondan (hasta 4 min)…"):
+    with working("Esperando a que Home Assistant y Z-Wave respondan (hasta 4 min)…"):
         ha_ok, zw_ok = api.wait_services_healthy(need_ha=need_ha, need_zwave=need_zwave)
     if need_ha:
         (success if ha_ok else warning)(
@@ -95,7 +96,8 @@ def _create_and_download(api: HasControllerAPI, status: HorusBackupStatus, ask_f
     if ask_first and not confirm("¿Crear el backup ahora?", default=True):
         return None
 
-    result = api.create_horus_backup(on_phase=_phase)
+    with working("Creando backup en el controlador…"):
+        result = api.create_horus_backup(on_phase=_phase)
     if not result.ok:
         _report_failure(result)
         return None
@@ -114,7 +116,8 @@ def _create_and_download(api: HasControllerAPI, status: HorusBackupStatus, ask_f
         success(f"Respaldo NVM de la antena: {nvm_path}")
 
     if confirm("¿Conservar en el controlador solo este último backup (borrar los anteriores)?", default=True):
-        removed = api.prune_remote_horus_backups(keep=1)
+        with working("Eliminando backups antiguos del controlador…"):
+            removed = api.prune_remote_horus_backups(keep=1)
         if removed:
             info(f"Eliminados {len(removed)} backup(s) antiguos del controlador.")
     return local_path
@@ -152,7 +155,8 @@ def _download_existing(api: HasControllerAPI, status: HorusBackupStatus) -> None
 def _delete_remote(api: HasControllerAPI, status: HorusBackupStatus) -> None:
     path = _pick_remote(status, "eliminar del controlador")
     if path and confirm(f"¿Eliminar {path.rsplit('/', 1)[-1]} del controlador?", default=False):
-        success(api.delete_remote_horus_backup(path))
+        with working("Eliminando backup del controlador…"):
+            success(api.delete_remote_horus_backup(path))
 
 
 def _local_backups(api: HasControllerAPI) -> None:
@@ -233,8 +237,8 @@ def _restore(api: HasControllerAPI, status: HorusBackupStatus) -> None:
     if not path:
         return
 
-    info("Verificando archivo local…")
-    archive = api.inspect_horus_backup(path)
+    with working("Verificando archivo local…"):
+        archive = api.inspect_horus_backup(path)
     if not _show_archive_info(archive, status):
         info("Cancelado.")
         return
@@ -283,7 +287,8 @@ def _restore(api: HasControllerAPI, status: HorusBackupStatus) -> None:
 
 
 def _run_revert(api: HasControllerAPI, stamp: str) -> None:
-    result = api.revert_horus_snapshot(stamp, on_phase=_phase)
+    with working("Revirtiendo al estado anterior…"):
+        result = api.revert_horus_snapshot(stamp, on_phase=_phase)
     if not result.ok:
         _report_failure(result)
         return
@@ -310,7 +315,8 @@ def _snapshots(api: HasControllerAPI, status: HorusBackupStatus) -> None:
         if confirm("¿Revertir ahora?", default=False):
             _run_revert(api, stamp)
     elif confirm("¿Eliminar definitivamente esta copia apartada?", default=False):
-        success(api.delete_horus_snapshots(stamp))
+        with working("Eliminando copia apartada…"):
+            success(api.delete_horus_snapshots(stamp))
 
 
 def _factory_reset(api: HasControllerAPI, status: HorusBackupStatus) -> None:
@@ -340,7 +346,8 @@ def _factory_reset(api: HasControllerAPI, status: HorusBackupStatus) -> None:
         info("ID no coincide. Reset cancelado.")
         return
 
-    result = api.factory_reset_horus(reset_ha=reset_ha, reset_zwave=reset_zw, on_phase=_phase)
+    with working("Aplicando reset de fábrica…"):
+        result = api.factory_reset_horus(reset_ha=reset_ha, reset_zwave=reset_zw, on_phase=_phase)
     if not result.ok:
         _report_failure(result)
         warning("El controlador revirtió automáticamente al estado anterior.")
@@ -352,11 +359,13 @@ def _factory_reset(api: HasControllerAPI, status: HorusBackupStatus) -> None:
         "¿Eliminar definitivamente la configuración anterior del controlador (para reasignar el equipo)?",
         default=False,
     ):
-        success(api.delete_horus_snapshots(result.detail))
+        with working("Eliminando copia apartada…"):
+            success(api.delete_horus_snapshots(result.detail))
 
 
 def _reboot(api: HasControllerAPI) -> None:
-    success(api.reboot_controller())
+    with working("Enviando reinicio al controlador…"):
+        success(api.reboot_controller())
     api.disconnect()
     raise NotConnectedError("Controlador reiniciando.")
 
@@ -365,7 +374,7 @@ def menu_horus_backup(api: HasControllerAPI) -> None:
     while True:
         section("Backup remoto estándar HORUS")
         try:
-            with console.status("Analizando controlador…"):
+            with working("Analizando controlador…"):
                 status = api.get_horus_backup_status()
         except NotConnectedError:
             raise

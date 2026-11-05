@@ -18,6 +18,7 @@ from ui import (
     section,
     success,
     warning,
+    working,
 )
 
 
@@ -52,7 +53,8 @@ def menu_maintenance(api: HasControllerAPI) -> None:
     while True:
         section("Mantenimiento y Limpieza")
         try:
-            status = api.get_maintenance_status()
+            with working("Analizando espacio y archivos…"):
+                status = api.get_maintenance_status()
             if summary:
                 status.last_cleanup_summary = summary
         except HasApiError as exc:
@@ -81,16 +83,18 @@ def menu_maintenance(api: HasControllerAPI) -> None:
                 summary = ""
                 continue
             if op == "2":
-                info("Ejecutando limpieza sistemática (esto puede tardar unos segundos)...")
-                summary = api.safe_cleanup()
+                with working("Limpieza sistemática: cachés APT/NPM y logs…"):
+                    summary = api.safe_cleanup()
                 success("Limpieza completada.")
             elif op == "3" and status.nested_config_detected:
                 if confirm("¿Eliminar carpeta /home/cat/config/config/ ?", default=False):
-                    summary = api.delete_nested_config()
+                    with working("Eliminando /config/config duplicada…"):
+                        summary = api.delete_nested_config()
                     success(summary)
             elif op == "4" and status.old_archives:
                 if confirm(f"¿Eliminar {len(status.old_archives)} archivos antiguos?", default=False):
-                    summary = api.delete_old_archives()
+                    with working("Eliminando archivos antiguos…"):
+                        summary = api.delete_old_archives()
                     success(summary)
             elif op == "5" and status.custom_components:
                 info("Carpetas en custom_components:")
@@ -104,8 +108,8 @@ def menu_maintenance(api: HasControllerAPI) -> None:
                     error(f"'{name}' no es una carpeta válida en custom_components.")
                     continue
                 if confirm(f"¿ELIMINAR PERMANENTEMENTE '{name}'?", default=False):
-                    info(f"Eliminando '{name}'...")
-                    summary = api.delete_custom_component(name)
+                    with working(f"Eliminando '{name}'…"):
+                        summary = api.delete_custom_component(name)
                     success(summary)
             else:
                 warning("Opción no válida.")
@@ -118,7 +122,8 @@ def menu_backup_manager(api: HasControllerAPI) -> None:
     while True:
         section("Backups locales en el controlador")
         try:
-            status = api.get_backup_status()
+            with working("Buscando backups…"):
+                status = api.get_backup_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -150,14 +155,16 @@ def menu_backup_manager(api: HasControllerAPI) -> None:
                 if status.low_space:
                     warning("Poco espacio libre; el backup puede fallar o llenar el disco.")
                 if confirm("¿Crear backups HA + Z-Wave ahora?", default=True):
-                    info("Creando backups…")
-                    success(api.backup_before_update())
+                    with working("Creando backups…"):
+                        success(api.backup_before_update())
             elif op == "3":
                 if confirm("¿Crear backup de config HA?", default=True):
-                    success(api.backup_ha_config())
+                    with working("Creando backup de config HA…"):
+                        success(api.backup_ha_config())
             elif op == "4":
                 if confirm("¿Crear backup del store Z-Wave?", default=True):
-                    success(api.backup_zwave_store())
+                    with working("Creando backup del store Z-Wave…"):
+                        success(api.backup_zwave_store())
             elif op == "5":
                 if not status.backups:
                     info("No hay backups para eliminar.")
@@ -169,7 +176,8 @@ def menu_backup_manager(api: HasControllerAPI) -> None:
                 target = status.backups[idx - 1]
                 warning(f"Se eliminará: {target.path} ({target.size})")
                 if confirm("¿Eliminar este backup de forma permanente?", default=False):
-                    success(api.delete_backup(target.path))
+                    with working("Eliminando backup…"):
+                        success(api.delete_backup(target.path))
             elif op == "6":
                 keep = ask_int("¿Cuántos backups recientes conservar por tipo?", default="2")
                 if keep is None or keep < 0:
@@ -180,15 +188,16 @@ def menu_backup_manager(api: HasControllerAPI) -> None:
                     "de HA y de Z-Wave."
                 )
                 if confirm("¿Continuar con la limpieza?", default=False):
-                    success(api.cleanup_old_backups(keep=keep))
+                    with working("Eliminando backups antiguos…"):
+                        success(api.cleanup_old_backups(keep=keep))
             elif op == "7":
                 warning(
                     "docker system prune -a -f elimina imágenes y contenedores no usados. "
                     "La imagen actual de HA en uso se conserva; capas huérfanas se borran."
                 )
                 if confirm("¿Ejecutar Docker prune ahora?", default=False):
-                    info("Ejecutando docker system prune…")
-                    success(api.docker_prune())
+                    with working("Ejecutando docker system prune…"):
+                        success(api.docker_prune())
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:

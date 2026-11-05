@@ -28,7 +28,9 @@ from ui import (
     panel_zwave_panel,
     section,
     success,
+    transfer_progress,
     warning,
+    working,
 )
 
 _USERS_PWD_SALT = bytes.fromhex("0a415f37ddca8118af7c0af99fe96538")
@@ -49,7 +51,8 @@ def _check_users_password(max_attempts: int = 3) -> bool:
 
 def menu_hostname(api: HasControllerAPI) -> None:
     section("Hostname")
-    info_data = api.get_hostname()
+    with working("Leyendo hostname…"):
+        info_data = api.get_hostname()
     panel_hostname(info_data.static_hostname, info_data.pretty_hostname)
     nuevo = ask("Nuevo hostname (vacío = cancelar)", default="")
     if not nuevo:
@@ -57,7 +60,8 @@ def menu_hostname(api: HasControllerAPI) -> None:
         return
     if confirm(f"¿Cambiar hostname a '{nuevo}'?", default=False):
         try:
-            api.set_hostname(nuevo)
+            with working("Cambiando hostname…"):
+                api.set_hostname(nuevo)
             success(f"Hostname actualizado a [bold]{nuevo}[/bold].")
         except ValidationError as exc:
             error(str(exc))
@@ -71,7 +75,8 @@ def menu_ha_users(api: HasControllerAPI) -> None:
     while True:
         section("Usuarios Home Assistant")
         try:
-            status = api.get_ha_users_status()
+            with working("Leyendo usuarios de Home Assistant…"):
+                status = api.get_ha_users_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -124,8 +129,8 @@ def menu_ha_users(api: HasControllerAPI) -> None:
                     f"¿Crear usuario '{username}' como {role_txt} y reiniciar HA?",
                     default=False,
                 ):
-                    info("Creando usuario, persona y reiniciando Home Assistant…")
-                    success(api.add_ha_user(username, pwd, is_admin=is_admin))
+                    with working("Creando usuario, persona y reiniciando Home Assistant…"):
+                        success(api.add_ha_user(username, pwd, is_admin=is_admin))
             elif op == "3":
                 username = ask("Usuario (login HA)").strip().lower()
                 if not username:
@@ -166,12 +171,12 @@ def menu_ha_users(api: HasControllerAPI) -> None:
                     continue
                 warning("Home Assistant se reiniciará para aplicar los cambios.")
                 if confirm(f"¿Actualizar usuario '{username}' y reiniciar HA?", default=False):
-                    info("Editando usuario y reiniciando Home Assistant…")
-                    success(
-                        api.update_ha_user(
-                            username, new_name=new_name, is_admin=is_admin
+                    with working("Editando usuario y reiniciando Home Assistant…"):
+                        success(
+                            api.update_ha_user(
+                                username, new_name=new_name, is_admin=is_admin
+                            )
                         )
-                    )
             elif op == "4":
                 username = ask("Usuario (login HA)").strip().lower()
                 if not username:
@@ -200,8 +205,8 @@ def menu_ha_users(api: HasControllerAPI) -> None:
                     question = f"¿Ocultar '{username}' de Personas y reiniciar HA?"
                 if not confirm(question, default=False):
                     continue
-                info("Aplicando cambio y reiniciando Home Assistant…")
-                success(api.set_ha_user_people_visibility(username, visible))
+                with working("Aplicando cambio y reiniciando Home Assistant…"):
+                    success(api.set_ha_user_people_visibility(username, visible))
             elif op == "5":
                 username = ask("Usuario (login HA)").strip().lower()
                 if not username:
@@ -228,8 +233,8 @@ def menu_ha_users(api: HasControllerAPI) -> None:
                     warning("Home Assistant se reiniciará para aplicar la nueva contraseña.")
                     if not confirm("¿Continuar con el reinicio de HA?", default=True):
                         continue
-                    info("Aplicando cambio y reiniciando Home Assistant…")
-                    success(api.change_ha_user_password(username, pwd))
+                    with working("Aplicando cambio y reiniciando Home Assistant…"):
+                        success(api.change_ha_user_password(username, pwd))
             elif op == "6":
                 username = ask("Usuario a designar como Owner").strip().lower()
                 if not username:
@@ -268,8 +273,8 @@ def menu_ha_users(api: HasControllerAPI) -> None:
                 if typed != "OWNER":
                     info("Cancelado.")
                     continue
-                info("Designando Owner y reiniciando Home Assistant…")
-                success(api.set_ha_user_owner(username))
+                with working("Designando Owner y reiniciando Home Assistant…"):
+                    success(api.set_ha_user_owner(username))
             elif op == "7":
                 username = ask("Usuario a eliminar (login HA)").strip().lower()
                 if not username:
@@ -298,8 +303,8 @@ def menu_ha_users(api: HasControllerAPI) -> None:
                 warning("Home Assistant se reiniciará tras el borrado.")
                 if not confirm("¿Continuar con el reinicio de HA?", default=True):
                     continue
-                info("Eliminando usuario y reiniciando Home Assistant…")
-                success(api.delete_ha_user(username))
+                with working("Eliminando usuario y reiniciando Home Assistant…"):
+                    success(api.delete_ha_user(username))
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -316,7 +321,8 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
     while True:
         section("plugin_service (custom component)")
         try:
-            status = api.get_plugin_service_status()
+            with working("Verificando plugin_service…"):
+                status = api.get_plugin_service_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -370,12 +376,12 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
                 else:
                     if not confirm(f"¿Subir '{local}' → plugin_service?", default=True):
                         continue
-                info("Subiendo por SFTP (puede tardar)…")
-                success(api.install_plugin_service(local, replace=True))
+                with working("Subiendo por SFTP (puede tardar)…") as w, api.ssh.reporting_transfers(transfer_progress(w)):
+                    success(api.install_plugin_service(local, replace=True))
                 _offer_aws_credentials_if_missing(api, default_aws)
                 if confirm("¿Desea reiniciar Home Assistant ahora para aplicar cambios?", default=True):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             elif op == "3":
                 if not status.parent_exists:
                     error("No se puede instalar: falta custom_components/.")
@@ -385,13 +391,14 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
                     if not confirm("¿Reinstalar desde GitHub?", default=True):
                         continue
                 
-                info("Descargando desde GitHub y subiendo al controlador (puede tardar)…")
                 try:
-                    success(api.install_plugin_service_from_github(replace=True))
+                    with working("Descargando desde GitHub y subiendo al controlador (puede tardar)…") as w, \
+                            api.ssh.reporting_transfers(transfer_progress(w)):
+                        success(api.install_plugin_service_from_github(replace=True))
                     _offer_aws_credentials_if_missing(api, default_aws)
                     if confirm("¿Desea reiniciar Home Assistant ahora para aplicar cambios?", default=True):
-                        info("Reiniciando HA…")
-                        success(api.restart_ha())
+                        with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                            success(api.restart_ha())
                 except Exception as exc:
                     error(f"Error al descargar de GitHub: {exc}")
             elif op == "4":
@@ -418,20 +425,20 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
                     ):
                         continue
                     replace = False
-                info("Subiendo AWS credentials…")
-                success(api.ensure_plugin_aws_credentials(local, replace=replace))
+                with working("Subiendo AWS credentials…"):
+                    success(api.ensure_plugin_aws_credentials(local, replace=replace))
             elif op == "5":
                 if not status.plugin_exists:
                     info("No hay nada que eliminar.")
                     continue
                 warning(f"Se ejecutará: rm -rf {status.plugin_dir}")
                 if confirm("¿Eliminar plugin_service del controlador?", default=False):
-                    info("Eliminando…")
-                    success(api.remove_plugin_service())
+                    with working("Eliminando…"):
+                        success(api.remove_plugin_service())
             elif op == "6":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -443,7 +450,8 @@ def menu_plugin_service(api: HasControllerAPI) -> None:
 def _offer_aws_credentials_if_missing(api: HasControllerAPI, default_aws: str) -> None:
     """Tras instalar v3, avisa si faltan AWS credentials y ofrece subirlas."""
     try:
-        st = api.get_plugin_service_status()
+        with working("Verificando plugin_service…"):
+            st = api.get_plugin_service_status()
     except HasApiError:
         return
     if st.aws_credentials_exists:
@@ -458,7 +466,8 @@ def _offer_aws_credentials_if_missing(api: HasControllerAPI, default_aws: str) -
     if not local:
         warning("Ruta vacía; se omite la subida.")
         return
-    success(api.ensure_plugin_aws_credentials(local, replace=False))
+    with working("Subiendo AWS credentials…"):
+        success(api.ensure_plugin_aws_credentials(local, replace=False))
 
 
 def menu_admin_network(api: HasControllerAPI) -> None:
@@ -468,7 +477,8 @@ def menu_admin_network(api: HasControllerAPI) -> None:
     while True:
         section("Admin Network (admin de red)")
         try:
-            status = api.get_admin_network_status()
+            with working("Verificando Admin Network…"):
+                status = api.get_admin_network_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -525,11 +535,12 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                 )
                 if not confirm("¿Instalar Admin Network completo?", default=True):
                     continue
-                info("Subiendo host e integración (pip/venv puede tardar)…")
-                success(api.install_admin_network(local, replace=True))
+                with working("Subiendo host e integración (pip/venv puede tardar)…") as w, \
+                        api.ssh.reporting_transfers(transfer_progress(w)):
+                    success(api.install_admin_network(local, replace=True))
                 if confirm("¿Reiniciar Home Assistant ahora?", default=True):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
                 info(
                     "Tras reiniciar, Admin Network debería aparecer ya configurado "
                     "en Dispositivos y Servicios (127.0.0.1:8765)."
@@ -541,8 +552,9 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                     continue
                 default_local = local
                 if confirm("¿Instalar solo el servicio host?", default=True):
-                    info("Ejecutando install.sh en el controlador…")
-                    success(api.install_admin_network_host(local))
+                    with working("Subiendo y ejecutando install.sh en el controlador…") as w, \
+                            api.ssh.reporting_transfers(transfer_progress(w)):
+                        success(api.install_admin_network_host(local))
             elif op == "4":
                 local = ask_confirmed_path("admin_network", default_local)
                 if not local:
@@ -550,15 +562,17 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                     continue
                 default_local = local
                 if confirm("¿Subir integración HA (reemplaza si existe)?", default=True):
-                    info("Subiendo custom_components/admin_network…")
-                    success(api.install_admin_network_ha(local, replace=True))
+                    with working("Subiendo custom_components/admin_network…") as w, \
+                            api.ssh.reporting_transfers(transfer_progress(w)):
+                        success(api.install_admin_network_ha(local, replace=True))
                     if confirm("¿Reiniciar Home Assistant ahora?", default=True):
-                        info("Reiniciando HA…")
-                        success(api.restart_ha())
+                        with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                            success(api.restart_ha())
             elif op == "5":
                 from local_config import mask_secret
 
-                key = api.get_admin_network_api_key()
+                with working("Leyendo API key…"):
+                    key = api.get_admin_network_api_key()
                 info(f"API key (enmascarada): {mask_secret(key)}")
                 if confirm("¿Mostrar la API key completa en pantalla?", default=False):
                     warning("Visible en pantalla / historial del terminal.")
@@ -571,10 +585,11 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                     "¿Inyectar host/port/API key en core.config_entries de HA?",
                     default=True,
                 ):
-                    success(api.configure_admin_network_ha_entry(force=True))
+                    with working("Configurando integración en Home Assistant…"):
+                        success(api.configure_admin_network_ha_entry(force=True))
                     if confirm("¿Reiniciar Home Assistant ahora?", default=True):
-                        info("Reiniciando HA…")
-                        success(api.restart_ha())
+                        with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                            success(api.restart_ha())
             elif op == "7":
                 warning(
                     "NO borre core.config_entries completo (perdería todas las "
@@ -582,13 +597,14 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                     "faltantes a las entries existentes."
                 )
                 if confirm("¿Reparar schema de core.config_entries ahora?", default=True):
-                    success(api.repair_ha_config_entries())
+                    with working("Reparando schema de core.config_entries…"):
+                        success(api.repair_ha_config_entries())
                     if confirm("¿Reiniciar Home Assistant ahora?", default=True):
-                        info("Reiniciando HA…")
-                        success(api.restart_ha())
+                        with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                            success(api.restart_ha())
             elif op == "8":
-                info("Diagnosticando WiFi…")
-                diag = api.diagnose_wifi()
+                with working("Diagnosticando WiFi…"):
+                    diag = api.diagnose_wifi()
                 if diag.healthy:
                     success(f"{diag.detail} (radio={diag.radio})")
                 else:
@@ -606,23 +622,23 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                     "La sesión SSH por ZeroTier/LAN suele recuperarse."
                 )
                 if confirm("¿Reparar WiFi ahora?", default=True):
-                    info("Aplicando recovery WiFi…")
-                    success(api.repair_wifi(force_nm_restart=True))
+                    with working("Aplicando recovery WiFi…"):
+                        success(api.repair_wifi(force_nm_restart=True))
             elif op == "10":
                 if not status.ha.component_exists and not status.host.dir_exists:
                     info("No hay nada que eliminar.")
                     continue
                 if confirm("¿Eliminar Admin Network COMPLETO (HA + Host)?", default=False):
                     wipe = confirm("¿Borrar también /etc/admin_network.env (API key)?", default=False)
-                    info("Eliminando integración HA…")
                     try:
-                        success(api.remove_admin_network_ha())
+                        with working("Eliminando integración HA…"):
+                            success(api.remove_admin_network_ha())
                     except Exception as e:
                         error(f"Error HA: {e}")
 
-                    info("Eliminando servicio host…")
                     try:
-                        success(api.remove_admin_network_host(wipe_env=wipe))
+                        with working("Eliminando servicio host…"):
+                            success(api.remove_admin_network_host(wipe_env=wipe))
                     except Exception as e:
                         error(f"Error Host: {e}")
             elif op == "11":
@@ -631,7 +647,8 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                     continue
                 wipe = confirm("¿Borrar también /etc/admin_network.env (API key)?", default=False)
                 if confirm("¿Eliminar servicio host admin_network?", default=False):
-                    success(api.remove_admin_network_host(wipe_env=wipe))
+                    with working("Eliminando servicio host…"):
+                        success(api.remove_admin_network_host(wipe_env=wipe))
             elif op == "12":
                 if not status.ha.component_exists and not status.ha_entry_configured:
                     info("No hay integración HA que eliminar.")
@@ -640,11 +657,12 @@ def menu_admin_network(api: HasControllerAPI) -> None:
                     "¿Eliminar custom_components/admin_network y su config entry?",
                     default=False,
                 ):
-                    success(api.remove_admin_network_ha())
+                    with working("Eliminando integración HA…"):
+                        success(api.remove_admin_network_ha())
             elif op == "13":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -660,7 +678,8 @@ def menu_helper_manager(api: HasControllerAPI) -> None:
     while True:
         section("Helper Manager (admin auxiliares)")
         try:
-            status = api.get_helper_manager_status()
+            with working("Verificando Helper Manager…"):
+                status = api.get_helper_manager_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -699,11 +718,11 @@ def menu_helper_manager(api: HasControllerAPI) -> None:
                     warning("Ya existe; se reemplazará.")
                 if not confirm(f"¿Subir '{local}' → helper_manager?", default=True):
                     continue
-                info("Subiendo por SFTP…")
-                success(api.install_helper_manager(local, replace=True))
+                with working("Subiendo por SFTP…") as w, api.ssh.reporting_transfers(transfer_progress(w)):
+                    success(api.install_helper_manager(local, replace=True))
                 if confirm("¿Reiniciar Home Assistant ahora?", default=True):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
                 info(
                     "En HA: Ajustes > Dispositivos y Servicios > Añadir > "
                     "Horus Helper Manager."
@@ -713,11 +732,12 @@ def menu_helper_manager(api: HasControllerAPI) -> None:
                     info("No hay nada que eliminar.")
                     continue
                 if confirm("¿Eliminar custom_components/helper_manager?", default=False):
-                    success(api.remove_helper_manager())
+                    with working("Eliminando helper_manager…"):
+                        success(api.remove_helper_manager())
             elif op == "4":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -733,7 +753,8 @@ def menu_blueprint_manager(api: HasControllerAPI) -> None:
     while True:
         section("Blueprint Manager (gestor de planos)")
         try:
-            status = api.get_blueprint_manager_status()
+            with working("Verificando Blueprint Manager…"):
+                status = api.get_blueprint_manager_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -779,11 +800,11 @@ def menu_blueprint_manager(api: HasControllerAPI) -> None:
                     warning("Ya existe; se reemplazará.")
                 if not confirm(f"¿Subir '{local}' → blueprint_manager?", default=True):
                     continue
-                info("Subiendo por SFTP…")
-                success(api.install_blueprint_manager(local, replace=True))
+                with working("Subiendo por SFTP…") as w, api.ssh.reporting_transfers(transfer_progress(w)):
+                    success(api.install_blueprint_manager(local, replace=True))
                 if confirm("¿Reiniciar Home Assistant ahora para aplicar cambios?", default=True):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
                 info(
                     "En HA: Ajustes > Dispositivos y Servicios > Añadir > "
                     "Horus Blueprint Manager. Luego recargue el navegador (Ctrl+F5)."
@@ -793,11 +814,12 @@ def menu_blueprint_manager(api: HasControllerAPI) -> None:
                     info("No hay nada que eliminar.")
                     continue
                 if confirm("¿Eliminar custom_components/blueprint_manager?", default=False):
-                    success(api.remove_blueprint_manager())
+                    with working("Eliminando blueprint_manager…"):
+                        success(api.remove_blueprint_manager())
             elif op == "4":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -813,7 +835,8 @@ def menu_hacs(api: HasControllerAPI) -> None:
     while True:
         section("HACS (Home Assistant Community Store)")
         try:
-            status = api.get_hacs_status()
+            with working("Verificando HACS…"):
+                status = api.get_hacs_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -856,8 +879,8 @@ def menu_hacs(api: HasControllerAPI) -> None:
                         default=True,
                     ):
                         continue
-                    info("Descargando hacs.zip desde GitHub en el controlador…")
-                    success(api.install_hacs_from_github(replace=True))
+                    with working("Descargando hacs.zip desde GitHub en el controlador…"):
+                        success(api.install_hacs_from_github(replace=True))
                 else:
                     local = ask_confirmed_path("HACS (carpeta o hacs.zip)", default_local)
                     if not local:
@@ -866,11 +889,11 @@ def menu_hacs(api: HasControllerAPI) -> None:
                     default_local = local
                     if not confirm(f"¿Subir '{local}' → hacs?", default=True):
                         continue
-                    info("Subiendo por SFTP…")
-                    success(api.install_hacs_from_local(local, replace=True))
+                    with working("Subiendo por SFTP…") as w, api.ssh.reporting_transfers(transfer_progress(w)):
+                        success(api.install_hacs_from_local(local, replace=True))
                 if confirm("¿Reiniciar Home Assistant ahora?", default=True):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
                 info(
                     "En HA: Ajustes > Dispositivos y Servicios > Añadir > HACS, "
                     "y autorice el código en github.com/login/device."
@@ -885,11 +908,12 @@ def menu_hacs(api: HasControllerAPI) -> None:
                         "desde Dispositivos y Servicios para evitar errores."
                     )
                 if confirm("¿Eliminar custom_components/hacs?", default=False):
-                    success(api.remove_hacs())
+                    with working("Eliminando HACS…"):
+                        success(api.remove_hacs())
             elif op == "5":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -905,7 +929,8 @@ def menu_zwave_panel(api: HasControllerAPI) -> None:
     while True:
         section("Z-Wave JS UI (panel lateral)")
         try:
-            status = api.get_zwave_panel_status()
+            with working("Verificando panel Z-Wave JS UI…"):
+                status = api.get_zwave_panel_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -947,21 +972,22 @@ def menu_zwave_panel(api: HasControllerAPI) -> None:
                     warning("Ya existe; se reemplazará el JS y se verificará el YAML.")
                 if not confirm(f"¿Subir '{local}' y registrar panel_custom?", default=True):
                     continue
-                info("Subiendo JS y parcheando configuration.yaml…")
-                success(api.install_zwave_panel(local, restart=False))
+                with working("Subiendo JS y parcheando configuration.yaml…"):
+                    success(api.install_zwave_panel(local, restart=False))
                 if confirm("¿Reiniciar Home Assistant ahora?", default=True):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             elif op == "3":
                 if not status.js_exists and not status.yaml_ok and not status.has_iframe_zwave:
                     info("No hay nada que eliminar.")
                     continue
                 if confirm("¿Eliminar el panel Z-Wave (JS + YAML)?", default=False):
-                    success(api.remove_zwave_panel())
+                    with working("Eliminando panel Z-Wave…"):
+                        success(api.remove_zwave_panel())
             elif op == "4":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -974,7 +1000,8 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
     while True:
         section("Configuración HTTP, Proxy y Discovery")
         try:
-            status = api.get_ha_configuration_status()
+            with working("Analizando configuración de Home Assistant…"):
+                status = api.get_ha_configuration_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -1050,23 +1077,23 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                 else:
                     warning("Se escribirá plantilla base de configuration.yaml sin bloque http.")
                 if confirm("¿Aplicar limpieza de configuration.yaml?", default=False):
-                    info("Escribiendo configuration.yaml…")
-                    success(api.ensure_ha_http_config())
+                    with working("Escribiendo configuration.yaml…"):
+                        success(api.ensure_ha_http_config())
                     if confirm("¿Desea reiniciar Home Assistant ahora para aplicar cambios?", default=True):
-                        info("Reiniciando HA…")
-                        success(api.restart_ha())
+                        with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                            success(api.restart_ha())
             elif op == "3":
                 warning(
                     "Se escribe en stable (no pending). Si nadie confirma en la UI, "
                     "pending se revierte a los 5 minutos y vuelve el 400."
                 )
                 if confirm("¿Aplicar trusted_proxies y reiniciar HA?", default=True):
-                    info("Parcheando .storage/http y reiniciando HA…")
-                    success(api.ensure_ha_trusted_proxies(restart=True))
+                    with working("Parcheando .storage/http y reiniciando HA…"):
+                        success(api.ensure_ha_trusted_proxies(restart=True))
             elif op == "4":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             elif op == "5":
                 if status.discovery_enabled:
                     warning(
@@ -1075,24 +1102,24 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                         "Se creará backup .bak.horus.discovery y se reiniciará HA."
                     )
                     if confirm("¿Desactivar Discovery (escaneo de red)?", default=False):
-                        info("Desactivando Discovery y reiniciando HA…")
-                        success(api.set_ha_discovery(enabled=False, restart=True))
+                        with working("Desactivando Discovery y reiniciando HA…"):
+                            success(api.set_ha_discovery(enabled=False, restart=True))
                 else:
                     warning(
                         "Se restaurará default_config (incluye escaneo de red). "
                         "Se reiniciará HA."
                     )
                     if confirm("¿Activar Discovery de nuevo?", default=False):
-                        info("Activar Discovery de nuevo y reiniciar HA…")
-                        success(api.set_ha_discovery(enabled=True, restart=True))
+                        with working("Activar Discovery de nuevo y reiniciar HA…"):
+                            success(api.set_ha_discovery(enabled=True, restart=True))
             elif op == "6":
-                info("Leyendo configuration.yaml…")
-                path, content = api.get_ha_configuration_yaml()
+                with working("Leyendo configuration.yaml…"):
+                    path, content = api.get_ha_configuration_yaml()
                 panel_yaml_content(content, path)
                 ask("Pulse Enter para continuar")
             elif op == "7":
-                info("Leyendo automations.yaml…")
-                path, content = api.get_ha_automations_yaml()
+                with working("Leyendo automations.yaml…"):
+                    path, content = api.get_ha_automations_yaml()
                 panel_yaml_content(content, path)
                 ask("Pulse Enter para continuar")
             elif op == "8":
@@ -1100,7 +1127,8 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                     "Validando con hass --script check_config "
                     "(puede tardar 1–3 min; útil tras timeout de automatizaciones)…"
                 )
-                result = api.check_ha_config()
+                with working("Validando configuración (check_config, 1–3 min)…"):
+                    result = api.check_ha_config()
                 if result.startswith("Errores detectados"):
                     error(result)
                     warning(
@@ -1110,8 +1138,8 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                 else:
                     success(result)
                 if confirm("¿Reiniciar Home Assistant ahora?", default=False):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
                 ask("Pulse Enter para continuar")
             elif op == "9":
                 warning(
@@ -1120,21 +1148,21 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
                     "Backup: .bak.horus.includes"
                 )
                 if confirm("¿Reparar includes ahora?", default=True):
-                    info("Reparando includes…")
-                    success(api.ensure_ha_yaml_includes(restart=False))
+                    with working("Reparando includes…"):
+                        success(api.ensure_ha_yaml_includes(restart=False))
                     if confirm("¿Reiniciar Home Assistant ahora?", default=True):
-                        info("Reiniciando HA…")
-                        success(api.restart_ha())
+                        with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                            success(api.restart_ha())
             elif op == "10":
                 warning(
                     "Esta reparación añade discovery_keys faltantes al registro de HA. "
                     "Soluciona integraciones que no aparecen."
                 )
                 if confirm("¿Reparar registro de integraciones y reiniciar HA?", default=True):
-                    info("Reparando schema de core.config_entries…")
-                    success(api.repair_ha_config_entries())
-                    info("Reiniciando Home Assistant para aplicar cambios…")
-                    success(api.restart_ha())
+                    with working("Reparando schema de core.config_entries…"):
+                        success(api.repair_ha_config_entries())
+                    with working("Reiniciando Home Assistant para aplicar cambios…"):
+                        success(api.restart_ha())
             elif op == "11":
                 _menu_delete_ha_yaml(api)
             elif op == "12":
@@ -1151,7 +1179,8 @@ def menu_ha_theme(api: HasControllerAPI) -> None:
     while True:
         section("Colores del historial (tema Horus)")
         try:
-            status = api.get_ha_theme_status()
+            with working("Verificando tema Horus…"):
+                status = api.get_ha_theme_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -1196,10 +1225,11 @@ def menu_ha_theme(api: HasControllerAPI) -> None:
                 )
                 if not confirm("¿Aplicar colores estándar Horus?", default=True):
                     continue
-                info("Aplicando tema Horus…")
-                success(api.apply_ha_theme(set_default=True))
+                with working("Aplicando tema Horus…"):
+                    success(api.apply_ha_theme(set_default=True))
                 if confirm("¿Validar configuración (check_config, 1–3 min)?", default=True):
-                    result = api.check_ha_config()
+                    with working("Validando configuración (check_config, 1–3 min)…"):
+                        result = api.check_ha_config()
                     if result.startswith("Errores detectados"):
                         error(result)
                         warning("No reinicie HA hasta corregir los errores.")
@@ -1207,14 +1237,15 @@ def menu_ha_theme(api: HasControllerAPI) -> None:
                         continue
                     success(result)
                 if confirm("¿Reiniciar Home Assistant ahora para cargar el tema?", default=True):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
                     info(
                         "En el navegador: Ctrl+F5. Los usuarios con tema personalizado en su "
                         "perfil deben elegir 'Predeterminado del servidor' o 'horus'."
                     )
             elif op == "3":
-                path, content = api.get_ha_theme_yaml()
+                with working("Leyendo tema…"):
+                    path, content = api.get_ha_theme_yaml()
                 panel_yaml_content(content, path)
                 ask("Pulse Enter para continuar")
             elif op == "4":
@@ -1222,14 +1253,15 @@ def menu_ha_theme(api: HasControllerAPI) -> None:
                     info("No hay tema Horus instalado.")
                     continue
                 if confirm("¿Eliminar tema Horus (con backup)?", default=False):
-                    success(api.remove_ha_theme())
+                    with working("Eliminando tema Horus…"):
+                        success(api.remove_ha_theme())
                     if confirm("¿Reiniciar Home Assistant ahora?", default=True):
-                        info("Reiniciando HA…")
-                        success(api.restart_ha())
+                        with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                            success(api.restart_ha())
             elif op == "5":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:
@@ -1284,11 +1316,11 @@ def _menu_delete_ha_yaml(api: HasControllerAPI) -> None:
                     "¿Recrear plantilla base de configuration.yaml con includes?",
                     default=True,
                 )
-            info(f"Eliminando {filename}…")
-            success(api.delete_ha_yaml_file(filename, recreate_config=recreate))
+            with working(f"Eliminando {filename}…"):
+                success(api.delete_ha_yaml_file(filename, recreate_config=recreate))
             if confirm("¿Reiniciar Home Assistant ahora?", default=True):
-                info("Reiniciando HA…")
-                success(api.restart_ha())
+                with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                    success(api.restart_ha())
         except ValidationError as exc:
             error(str(exc))
         except HasApiError as exc:
@@ -1298,7 +1330,8 @@ def _menu_delete_ha_yaml(api: HasControllerAPI) -> None:
 def menu_ha_integrations(api: HasControllerAPI) -> None:
     while True:
         try:
-            status = api.get_ha_configuration_status()
+            with working("Analizando configuración de Home Assistant…"):
+                status = api.get_ha_configuration_status()
         except HasApiError as exc:
             error(str(exc))
             break
@@ -1317,8 +1350,8 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                 ("1", "plugin_service (conexion energy)"),
                 ("2", "Admin Network (administrador de Redes)"),
                 ("3", "Helper Manager (administrador de Auxiliares)"),
-                ("4", "Blueprint Manager (gestor de planos)"),
-                ("5", "Z-Wave JS UI (panel lateral :8091)"),
+                ("4", "Z-Wave JS UI (panel lateral :8091)"),
+                ("5", "Blueprint Manager (gestor de planos)"),
                 ("6", "HACS (Home Assistant Community Store)"),
                 ("", ""),
                 ("7", "Restaurar integraciones core sin Discovery - Recupera Historial, Logbook, Energía y Backup"),
@@ -1340,9 +1373,9 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
             elif op == "3":
                 menu_helper_manager(api)
             elif op == "4":
-                menu_blueprint_manager(api)
-            elif op == "5":
                 menu_zwave_panel(api)
+            elif op == "5":
+                menu_blueprint_manager(api)
             elif op == "6":
                 menu_hacs(api)
             elif op == "7":
@@ -1355,22 +1388,22 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                     "Backup .bak.horus.core y reinicio de HA."
                 )
                 if confirm("¿Restaurar integraciones core y reiniciar HA?", default=True):
-                    info("Escribiendo configuration.yaml y reiniciando HA…")
-                    success(api.restore_ha_core_integrations(restart=True))
+                    with working("Escribiendo configuration.yaml y reiniciando HA…"):
+                        success(api.restore_ha_core_integrations(restart=True))
             elif op == "8":
                 warning(
                     "Esta reparación añade discovery_keys faltantes al registro de HA. "
                     "Soluciona integraciones que no aparecen."
                 )
                 if confirm("¿Reparar registro de integraciones y reiniciar HA?", default=True):
-                    info("Reparando schema de core.config_entries…")
-                    success(api.repair_ha_config_entries())
-                    info("Reiniciando Home Assistant para aplicar cambios…")
-                    success(api.restart_ha())
+                    with working("Reparando schema de core.config_entries…"):
+                        success(api.repair_ha_config_entries())
+                    with working("Reiniciando Home Assistant para aplicar cambios…"):
+                        success(api.restart_ha())
             elif op == "9":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
-                    info("Reiniciando HA…")
-                    success(api.restart_ha())
+                    with working("Reiniciando Home Assistant (hasta 1 min)…"):
+                        success(api.restart_ha())
             else:
                 warning("Opción no válida.")
         except ValidationError as exc:

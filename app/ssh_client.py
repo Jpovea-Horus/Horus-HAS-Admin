@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
@@ -24,6 +25,7 @@ KNOWN_HOSTS_PATH = user_data_file("ssh_known_hosts")
 DEFAULT_PORT = 22
 DEFAULT_TIMEOUT = 15
 CLOUDFLARE_TIMEOUT = 45
+KEEPALIVE_S = 30
 CLOUDFLARE_DOMAIN = "rhorus.com"
 
 
@@ -197,6 +199,17 @@ class SSHClient:
         self._host: str = ""
         self._is_root: bool = False
         self._use_cloudflare: bool = False
+        self._transfer_cb: Optional[Callable[[int, int], None]] = None
+
+    @contextmanager
+    def reporting_transfers(self, callback: Callable[[int, int], None]) -> Iterator[None]:
+        """Durante el bloque, las subidas SFTP sin `progress` propio reportan a `callback`."""
+        previous = self._transfer_cb
+        self._transfer_cb = callback
+        try:
+            yield
+        finally:
+            self._transfer_cb = previous
 
     @property
     def is_connected(self) -> bool:
@@ -290,6 +303,9 @@ class SSHClient:
             raise SSHConnectionError(f"No se pudo alcanzar {self._host}: {exc}") from exc
 
         self._client = client
+        transport = client.get_transport()
+        if transport is not None:
+            transport.set_keepalive(KEEPALIVE_S)
         whoami = self.run("whoami").stdout.strip()
         self._is_root = whoami == "root"
         has_sudo = self._is_root or self._check_sudo(whoami)
@@ -329,9 +345,12 @@ class SSHClient:
         assert self._client is not None
         cmd_timeout = self._timeout if timeout is None else timeout
         _, stdout, stderr = self._client.exec_command(cmd, timeout=cmd_timeout)
-        exit_code = stdout.channel.recv_exit_status()
+        # Leer antes de recv_exit_status: con salidas grandes el buffer del canal se llena y bloquea.
+        # Sin timeout de lectura, igual que recv_exit_status (comandos largos sin salida).
+        stdout.channel.settimeout(None)
         out = stdout.read().decode("utf-8", errors="replace").strip()
         err = stderr.read().decode("utf-8", errors="replace").strip()
+        exit_code = stdout.channel.recv_exit_status()
 
         return CommandResult(stdout=out, stderr=err, exit_code=exit_code)
 
@@ -518,40 +537,51 @@ class SSHClient:
         local_dir: str,
         remote_dir: str,
         skip_dirs: Optional[set[str]] = None,
+        progress: Optional[Callable[[int, int], None]] = None,
     ) -> int:
         """
         Sube un árbol de directorios por SFTP.
         Destino remoto se crea si no existe. Devuelve cantidad de archivos subidos.
+        `progress(bytes_subidos, bytes_totales)` se llama durante la subida.
         """
-        import os
-
         local = Path(local_dir)
         if not local.is_dir():
             raise SSHCommandError(f"Carpeta local no encontrada: {local_dir}")
 
         ignore = skip_dirs or {"__pycache__", ".git", ".idea", ".vscode", "__MACOSX"}
-        uploaded = 0
+        remote_dirs: list[str] = []
+        plan: list[tuple[str, str]] = []
+        for root, dirs, files in os.walk(local):
+            dirs[:] = [d for d in dirs if d not in ignore]
+            rel = os.path.relpath(root, local)
+            if rel == ".":
+                remote_root = remote_dir.rstrip("/")
+            else:
+                remote_root = f"{remote_dir.rstrip('/')}/{rel.replace(os.sep, '/')}"
+            remote_dirs.append(remote_root)
+            for name in files:
+                if not name.endswith((".pyc", ".pyo")):
+                    plan.append((os.path.join(root, name), f"{remote_root}/{name}"))
+        total = sum(os.path.getsize(p[0]) for p in plan)
+        progress = progress or self._transfer_cb
+
+        sent = 0
         sftp = self.open_sftp()
         try:
-            self._sftp_makedirs(sftp, remote_dir)
-            for root, dirs, files in os.walk(local):
-                dirs[:] = [d for d in dirs if d not in ignore]
-                rel = os.path.relpath(root, local)
-                if rel == ".":
-                    remote_root = remote_dir.rstrip("/")
-                else:
-                    remote_root = f"{remote_dir.rstrip('/')}/{rel.replace(os.sep, '/')}"
+            for remote_root in remote_dirs:
                 self._sftp_makedirs(sftp, remote_root)
-                for name in files:
-                    if name.endswith((".pyc", ".pyo")):
-                        continue
-                    local_path = os.path.join(root, name)
-                    remote_path = f"{remote_root}/{name}"
-                    sftp.put(local_path, remote_path)
-                    uploaded += 1
+            for local_path, remote_path in plan:
+                cb = None
+                if progress:
+                    base = sent
+                    cb = lambda done, _t, base=base: progress(base + done, total)
+                sftp.put(local_path, remote_path, callback=cb)
+                sent += os.path.getsize(local_path)
+                if progress:
+                    progress(sent, total)
         finally:
             sftp.close()
-        return uploaded
+        return len(plan)
 
     def download_file(
         self,
@@ -587,7 +617,9 @@ class SSHClient:
             raise SSHCommandError(f"Archivo local no encontrado: {local_path}")
         sftp = self.open_sftp()
         try:
-            attrs = sftp.put(local_path, remote_path, callback=progress, confirm=True)
+            attrs = sftp.put(
+                local_path, remote_path, callback=progress or self._transfer_cb, confirm=True
+            )
         except Exception as exc:
             raise SSHCommandError(f"Fallo al subir {local_path}: {exc}") from exc
         finally:

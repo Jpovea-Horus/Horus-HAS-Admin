@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from controller import HasControllerAPI
 from exceptions import SSHConnectionError
 from session_store import load_hosts, remember_host
-from ui import ask, ask_password, confirm, error, info, menu_options, section, success, warning
+from ui import ask, ask_password, confirm, error, info, menu_options, section, success, warning, working
 
 
 @dataclass
@@ -125,10 +125,14 @@ def _do_connect(
     password: str,
     use_cloudflare: bool,
 ) -> bool:
+    message = (
+        f"Conectando a {host} vía Cloudflare Access (puede abrir el navegador para login)…"
+        if use_cloudflare
+        else f"Conectando a {user}@{host}…"
+    )
     try:
-        if use_cloudflare:
-            info("Conectando vía Cloudflare Access… (puede abrir el navegador para login)")
-        session = api.connect(user, host, password, use_cloudflare=use_cloudflare)
+        with working(message):
+            session = api.connect(user, host, password, use_cloudflare=use_cloudflare)
         mode = "Cloudflare" if use_cloudflare else "LAN"
         success(
             f"Conectado ({mode}) como [bold]{session.remote_user}[/bold] en {session.host}"
@@ -148,7 +152,6 @@ def _do_connect(
 
 def reconnect_or_prompt(api: HasControllerAPI) -> bool:
     if memory.host_input and memory.password:
-        info("Reconectando al último controlador…")
         if _do_connect(
             api,
             memory.user,

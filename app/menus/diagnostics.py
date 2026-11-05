@@ -55,7 +55,8 @@ def menu_review_diagnostics(api: HasControllerAPI) -> None:
             if op == "1":
                 _menu_process_monitor(api)
             elif op == "2":
-                panel_system_health(api.get_system_health())
+                with working("Leyendo salud del sistema…"):
+                    panel_system_health(api.get_system_health())
                 ask("Pulse Enter para volver al menú")
             elif op == "3":
                 with working("Revisando estado del controlador…"):
@@ -94,7 +95,8 @@ def _menu_process_monitor(api: HasControllerAPI) -> None:
         api.run_process_monitor()
         ask("Pulse Enter para volver al menú")
     elif sub == "2":
-        panel_process_snapshot(api.get_top_snapshot())
+        with working("Leyendo procesos…"):
+            panel_process_snapshot(api.get_top_snapshot())
         ask("Pulse Enter para volver al menú")
     elif sub != "0":
         warning("Opción no válida.")

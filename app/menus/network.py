@@ -20,26 +20,31 @@ from ui import (
     table_devices,
     table_wifi,
     warning,
+    working,
 )
 
 
 def menu_network_status(api: HasControllerAPI) -> None:
     section("Estado de red")
-    status = api.get_network_summary()
+    with working("Leyendo interfaces, IPs y gateway…"):
+        status = api.get_network_summary()
     table_devices(status.devices, status.default_gateway)
     panel_ip_output(status.raw_ip_addr)
     if confirm("¿Ejecutar ping a 8.8.8.8?", default=False):
         try:
-            panel_ping(api.ping())
+            with working("Ping a 8.8.8.8…"):
+                out = api.ping()
+            panel_ping(out)
         except HasApiError as exc:
             error(f"Ping falló: {exc}")
 
 
 def _select_profile(api: HasControllerAPI, device_filter: str) -> tuple[str, str] | None:
-    if device_filter == "ethernet":
-        devs = api.network.get_ethernet_devices()
-    else:
-        devs = api.network.get_wifi_devices()
+    with working("Buscando interfaces…"):
+        if device_filter == "ethernet":
+            devs = api.network.get_ethernet_devices()
+        else:
+            devs = api.network.get_wifi_devices()
 
     if not devs:
         warning(f"No hay interfaces {device_filter}.")
@@ -58,7 +63,8 @@ def _select_profile(api: HasControllerAPI, device_filter: str) -> tuple[str, str
             return None
         device = devs[idx - 1].device
 
-    profile = api.network.get_profile_for_device(device)
+    with working(f"Leyendo perfil de {device}…"):
+        profile = api.network.get_profile_for_device(device)
     if not profile:
         warning("No hay perfil de conexión activo para esa interfaz.")
         return None
@@ -70,7 +76,8 @@ def _menu_ip_profile(api: HasControllerAPI, device_filter: str) -> None:
     if not selected:
         return
     device, profile = selected
-    prof = api.network.get_connection_profile(profile)
+    with working(f"Leyendo configuración IP de '{profile}'…"):
+        prof = api.network.get_connection_profile(profile)
     panel_profile(profile, prof)
 
     opts = [
@@ -87,13 +94,15 @@ def _menu_ip_profile(api: HasControllerAPI, device_filter: str) -> None:
     try:
         if op == "1":
             if confirm(f"¿Aplicar DHCP en '{profile}'?", default=False):
-                api.network.set_dhcp(profile)
+                with working("Aplicando DHCP (la conexión se re-activa)…"):
+                    api.network.set_dhcp(profile)
                 success("DHCP aplicado correctamente.")
                 if prof.ipv4_dns and confirm(
                     f"El perfil tiene DNS manual ({prof.ipv4_dns}). ¿Usar los DNS del DHCP?",
                     default=True,
                 ):
-                    api.network.reset_dns_auto(profile)
+                    with working("Restaurando DNS automáticos…"):
+                        api.network.reset_dns_auto(profile)
                     success("DNS automáticos (DHCP) restaurados.")
         elif op == "2":
             addr = ask("IP/máscara CIDR", default="192.168.1.50/24")
@@ -102,12 +111,14 @@ def _menu_ip_profile(api: HasControllerAPI, device_filter: str) -> None:
             warning("Si cambia la IP del host, la sesión SSH puede cortarse.")
             info("Use C en el menú principal para reconectar a la nueva IP.")
             if confirm("¿Aplicar IP estática?", default=False):
-                api.network.set_static_ip(profile, addr, gw, dns or None)
+                with working("Aplicando IP estática (la conexión se re-activa)…"):
+                    api.network.set_static_ip(profile, addr, gw, dns or None)
                 success("IP estática aplicada.")
         elif op == "3":
             _menu_dns(api, profile, prof)
         elif op == "4" and device_filter == "ethernet":
-            api.network.reapply_device(device)
+            with working(f"Re-aplicando {device}…"):
+                api.network.reapply_device(device)
             success("Interfaz re-aplicada.")
     except HasApiError as exc:
         error(str(exc))
@@ -130,13 +141,15 @@ def _menu_dns(api: HasControllerAPI, profile: str, prof) -> None:
         servers = api.network.parse_dns_servers(dns)
         info("La conexión se re-activa; la sesión SSH puede cortarse unos segundos.")
         if confirm(f"¿Aplicar DNS {', '.join(servers)} en '{profile}'?", default=False):
-            api.network.set_dns(profile, dns, ignore_auto=(op == "1"))
+            with working("Aplicando DNS…"):
+                api.network.set_dns(profile, dns, ignore_auto=(op == "1"))
             success("DNS aplicados.")
     elif op == "3":
         if not is_dhcp:
             warning("Con IP estática y sin DNS el controlador no resolverá nombres.")
         if confirm(f"¿Eliminar DNS manuales en '{profile}'?", default=False):
-            api.network.reset_dns_auto(profile)
+            with working("Eliminando DNS manuales…"):
+                api.network.reset_dns_auto(profile)
             success("DNS manuales eliminados.")
     elif op != "0":
         warning("Opción no válida.")
@@ -168,24 +181,29 @@ def menu_wifi(api: HasControllerAPI) -> None:
             break
         try:
             if op == "1":
-                info("Escaneando redes…")
-                networks = api.network.list_wifi()
+                with working("Escaneando redes Wi-Fi…"):
+                    networks = api.network.list_wifi()
                 if networks:
                     table_wifi(networks)
                 else:
                     warning("No se encontraron redes.")
-                    diag = api.diagnose_wifi()
+                    with working("Diagnosticando Wi-Fi…"):
+                        diag = api.diagnose_wifi()
                     if not diag.healthy:
                         warning(diag.detail)
                         if confirm("¿Intentar reparar WiFi ahora?", default=True):
-                            success(api.repair_wifi(force_nm_restart=True))
+                            with working("Reparando Wi-Fi (puede reiniciar NetworkManager)…"):
+                                result = api.repair_wifi(force_nm_restart=True)
+                            success(result)
             elif op == "2":
                 ssid = ask("SSID")
                 pwd = ask_password("Contraseña Wi-Fi")
-                api.network.connect_wifi(ssid, pwd)
+                with working(f"Conectando a {ssid}…"):
+                    api.network.connect_wifi(ssid, pwd)
                 success(f"Conectado a [bold]{ssid}[/bold].")
             elif op == "3":
-                devs = api.network.get_wifi_devices()
+                with working("Buscando interfaces Wi-Fi…"):
+                    devs = api.network.get_wifi_devices()
                 if not devs:
                     warning("Sin interfaz Wi-Fi.")
                     continue
@@ -201,12 +219,14 @@ def menu_wifi(api: HasControllerAPI) -> None:
                         warning("Selección inválida.")
                         continue
                     device = devs[idx - 1].device
-                api.network.disconnect_device(device)
+                with working(f"Desconectando {device}…"):
+                    api.network.disconnect_device(device)
                 success("Wi-Fi desconectado.")
             elif op == "4":
                 _menu_ip_profile(api, "wifi")
             elif op == "5":
-                diag = api.diagnose_wifi()
+                with working("Diagnosticando Wi-Fi…"):
+                    diag = api.diagnose_wifi()
                 if diag.healthy:
                     success(f"{diag.detail} (radio={diag.radio})")
                 else:
@@ -215,8 +235,9 @@ def menu_wifi(api: HasControllerAPI) -> None:
                     info(diag.devices_raw)
             elif op == "6":
                 if confirm("¿Reparar WiFi (puede reiniciar NetworkManager)?", default=True):
-                    info("Reparando…")
-                    success(api.repair_wifi(force_nm_restart=True))
+                    with working("Reparando Wi-Fi (puede reiniciar NetworkManager)…"):
+                        result = api.repair_wifi(force_nm_restart=True)
+                    success(result)
             else:
                 warning("Opción no válida.")
         except HasApiError as exc:

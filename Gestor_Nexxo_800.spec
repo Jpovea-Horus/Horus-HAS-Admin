@@ -2,12 +2,48 @@
 # PyInstaller — Gestor Nexxo 800 (portable Windows)
 
 import os
+import re
 
 from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.win32.versioninfo import (
+    FixedFileInfo,
+    StringFileInfo,
+    StringStruct,
+    StringTable,
+    VarFileInfo,
+    VarStruct,
+    VSVersionInfo,
+)
 
 SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
 APP_DIR = os.path.join(SPEC_DIR, "app")
 ICON_PATH = os.path.join(SPEC_DIR, "assets", "icon.ico")
+
+# Se lee con regex (no import) para no ejecutar paths.py, que crea carpetas en LOCALAPPDATA.
+with open(os.path.join(APP_DIR, "paths.py"), encoding="utf-8") as fh:
+    _paths_src = fh.read()
+APP_NAME = re.search(r'^APP_NAME\s*=\s*"([^"]+)"', _paths_src, re.M).group(1)
+APP_VERSION = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', _paths_src, re.M).group(1)
+_ver = tuple((int(p) for p in (APP_VERSION.split(".") + ["0"] * 4)[:4]))
+
+VERSION_INFO = VSVersionInfo(
+    ffi=FixedFileInfo(filevers=_ver, prodvers=_ver, mask=0x3F, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0),
+    kids=[
+        StringFileInfo([
+            StringTable("0C0A04B0", [
+                StringStruct("CompanyName", "Nexxo"),
+                StringStruct("FileDescription", f"{APP_NAME} - Administración de controladores HAS"),
+                StringStruct("FileVersion", APP_VERSION),
+                StringStruct("InternalName", "Gestor_Nexxo_800"),
+                StringStruct("LegalCopyright", "© Nexxo — Investigación y desarrollo"),
+                StringStruct("OriginalFilename", f"{APP_NAME}.exe"),
+                StringStruct("ProductName", APP_NAME),
+                StringStruct("ProductVersion", APP_VERSION),
+            ])
+        ]),
+        VarFileInfo([VarStruct("Translation", [0x0C0A, 1200])]),
+    ],
+)
 INTEGRATIONS_SRC = r"C:\DataJpovea\Documentos\Home Assistant\HAS - App\integrations"
 
 block_cipher = None
@@ -116,10 +152,12 @@ exe = EXE(
     [],
     name="Gestor Nexxo 800",
     icon=ICON_PATH if os.path.isfile(ICON_PATH) else None,
+    version=VERSION_INFO,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX dispara falsos positivos de antivirus y rompe la firma digital.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,

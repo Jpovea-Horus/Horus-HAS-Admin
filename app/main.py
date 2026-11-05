@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 
 def _setup_working_dir() -> None:
@@ -81,27 +83,52 @@ def update_flow(api: HasControllerAPI | None = None, silent: bool = False) -> No
         error(str(exc))
 
 
-def _health_panel(api: HasControllerAPI):
-    try:
-        with working("Revisando estado del controlador…"):
-            return panel_health_check(api.get_health_check())
-    except NotConnectedError:
-        raise
-    except HasApiError as exc:
-        warning(f"No se pudo calcular el semáforo: {exc}")
-        return None
+_background_release: dict = {}
+
+
+def _check_update_in_background() -> None:
+    """Consulta GitHub sin bloquear el arranque; el menú avisa si hay versión nueva."""
+
+    def _worker() -> None:
+        try:
+            _background_release["release"] = check_latest(timeout=5)
+        except UpdateError:
+            pass
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _load_status(api: HasControllerAPI, refresh: bool = False):
+    """Info del sistema + semáforo en paralelo (dos canales sobre la misma sesión SSH)."""
+    get_info = api.refresh_system_info if refresh else api.get_system_info
+    health_error: HasApiError | None = None
+    with working("Cargando información del sistema y semáforo…"), ThreadPoolExecutor(2) as pool:
+        f_info = pool.submit(get_info)
+        f_health = pool.submit(api.get_health_check)
+        system_info = f_info.result()
+        try:
+            health_panel = panel_health_check(f_health.result())
+        except NotConnectedError:
+            raise
+        except HasApiError as exc:
+            health_panel, health_error = None, exc
+    if health_error:
+        warning(f"No se pudo calcular el semáforo: {health_error}")
+    return system_info, health_panel
 
 
 def main_menu(api: HasControllerAPI) -> str:
     """Bucle del menú. Devuelve: exit | next | lost."""
-    system_info = api.get_system_info()
     try:
-        health_panel = _health_panel(api)
+        system_info, health_panel = _load_status(api)
     except NotConnectedError:
         return "lost"
 
     while True:
         banner()
+        release = _background_release.get("release")
+        if release:
+            warning(f"Nueva versión disponible: {release.version} (actual {APP_VERSION}) · pulse U para actualizar")
         menu_panel = get_menu_panel(
             "Gestor Nexxo 800",
             [
@@ -160,10 +187,7 @@ def main_menu(api: HasControllerAPI) -> str:
             elif op == "I":
                 support_report_flow(api)
             elif op == "R":
-                info("Actualizando información del sistema…")
-                system_info = api.refresh_system_info()
-                health_panel = _health_panel(api)
-                success("Información actualizada.")
+                system_info, health_panel = _load_status(api, refresh=True)
             elif op == "U":
                 update_flow(api)
                 if not api.connected:
@@ -181,7 +205,7 @@ def main_menu(api: HasControllerAPI) -> str:
 
 def main() -> None:
     banner()
-    update_flow(silent=True)
+    _check_update_in_background()
     api = HasControllerAPI()
     try:
         while True:

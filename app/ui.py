@@ -6,6 +6,9 @@ import getpass
 import os
 import re
 import sys
+import time
+from contextlib import contextmanager
+from typing import Callable, Iterator
 
 from rich import box
 from rich.console import Console, Group
@@ -74,10 +77,7 @@ console = Console(theme=HAS_THEME)
 
 
 def clear_screen() -> None:
-    if os.name == "nt":
-        os.system("cls")
-    else:
-        console.clear()
+    console.clear()
 
 
 def banner() -> None:
@@ -316,9 +316,70 @@ def main_menu_layout(
     console.print(grid)
 
 
-def working(message: str):
-    """Spinner mientras se ejecuta una operación remota (usar con `with`)."""
-    return console.status(f"[info]{message}[/info]", spinner="dots")
+class WorkingLabel:
+    """Texto del spinner: mensaje + segundos transcurridos (se re-renderiza en cada refresco)."""
+
+    def __init__(self, message: str):
+        self.message = message
+        self.started = time.monotonic()
+
+    @property
+    def elapsed(self) -> float:
+        return time.monotonic() - self.started
+
+    def update(self, message: str) -> None:
+        self.message = message
+
+    def __rich__(self) -> Text:
+        return Text.from_markup(f"[info]{self.message}[/info] [dim]{int(self.elapsed)} s[/dim]")
+
+
+_active_label: WorkingLabel | None = None
+
+
+@contextmanager
+def working(message: str) -> Iterator[WorkingLabel]:
+    """Spinner con tiempo transcurrido mientras se ejecuta una operación remota.
+
+    Reentrante: Rich solo admite un Live activo, así que un `working` anidado
+    reutiliza el spinner exterior y restaura su mensaje al salir.
+    No llamar a ask()/confirm() dentro: el spinner tapa la pregunta.
+    """
+    global _active_label
+    if _active_label is not None:
+        outer = _active_label
+        previous = outer.message
+        outer.update(message)
+        try:
+            yield outer
+        finally:
+            outer.update(previous)
+        return
+
+    label = WorkingLabel(message)
+    _active_label = label
+    try:
+        with console.status(label, spinner="dots"):
+            yield label
+    finally:
+        _active_label = None
+    if label.elapsed >= 3:
+        console.print(f"[dim]  ✓ {label.message.rstrip('…')} · {label.elapsed:.0f} s[/dim]")
+
+
+def transfer_progress(label: WorkingLabel) -> Callable[[int, int], None]:
+    """Callback SFTP (done, total) que muestra el porcentaje en el spinner activo."""
+    base = label.message.rstrip("…")
+
+    def _cb(done: int, total: int) -> None:
+        if not total:
+            return
+        if done >= total:
+            label.update(f"{base}…")
+        else:
+            label.update(f"{base} {done * 100 // total} % ({done // 1024:,} / {total // 1024:,} KB)…")
+
+    return _cb
 
 
 _LEVEL_STYLE = {
