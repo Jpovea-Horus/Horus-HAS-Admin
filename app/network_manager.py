@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import shlex
 from typing import Optional
@@ -51,6 +52,10 @@ class NetworkManager:
             ipv4_addresses=fields.get("ipv4.addresses", ""),
             ipv4_gateway=fields.get("ipv4.gateway", ""),
             ipv4_dns=fields.get("ipv4.dns", ""),
+            ipv4_ignore_auto_dns=fields.get("ipv4.ignore-auto-dns", ""),
+            ipv4_dns_active=", ".join(
+                v for k, v in fields.items() if k.startswith("IP4.DNS[") and v
+            ),
         )
 
     def get_profile_for_device(self, device: str) -> Optional[str]:
@@ -123,6 +128,7 @@ class NetworkManager:
     ) -> str:
         if "/" not in address_cidr:
             raise ValidationError("La dirección debe incluir máscara CIDR (ej. 192.168.1.50/24).")
+        dns_servers = self.parse_dns_servers(dns) if dns else []
         q = shlex.quote(profile_name)
         self._ssh.run_or_raise(
             f"nmcli connection modify {q} ipv4.method manual "
@@ -130,11 +136,50 @@ class NetworkManager:
             f"ipv4.gateway {shlex.quote(gateway)}",
             use_sudo=True,
         )
-        if dns:
+        if dns_servers:
             self._ssh.run_or_raise(
-                f"nmcli connection modify {q} ipv4.dns {shlex.quote(dns)}",
+                f"nmcli connection modify {q} "
+                f"ipv4.dns {shlex.quote(','.join(dns_servers))}",
                 use_sudo=True,
             )
+        return self._ssh.run_or_raise(f"nmcli connection up {q}", use_sudo=True)
+
+    @staticmethod
+    def parse_dns_servers(raw: str) -> list[str]:
+        """Convierte '8.8.8.8, 1.1.1.1' o '8.8.8.8 1.1.1.1' en lista IPv4 validada."""
+        servers: list[str] = []
+        for token in re.split(r"[,\s;]+", raw.strip()):
+            if not token:
+                continue
+            try:
+                ip = str(ipaddress.IPv4Address(token))
+            except ValueError as exc:
+                raise ValidationError(f"DNS inválido: '{token}' (se espera IPv4).") from exc
+            if ip not in servers:
+                servers.append(ip)
+        if not servers:
+            raise ValidationError("Indique al menos un servidor DNS.")
+        return servers
+
+    def set_dns(self, profile_name: str, dns: str, ignore_auto: bool = True) -> str:
+        """DNS manual IPv4. ignore_auto=True descarta los DNS entregados por DHCP."""
+        servers = self.parse_dns_servers(dns)
+        q = shlex.quote(profile_name)
+        self._ssh.run_or_raise(
+            f"nmcli connection modify {q} "
+            f"ipv4.dns {shlex.quote(','.join(servers))} "
+            f"ipv4.ignore-auto-dns {'yes' if ignore_auto else 'no'}",
+            use_sudo=True,
+        )
+        return self._ssh.run_or_raise(f"nmcli connection up {q}", use_sudo=True)
+
+    def reset_dns_auto(self, profile_name: str) -> str:
+        """Elimina DNS manuales y vuelve a usar los del DHCP."""
+        q = shlex.quote(profile_name)
+        self._ssh.run_or_raise(
+            f"nmcli connection modify {q} ipv4.dns '' ipv4.ignore-auto-dns no",
+            use_sudo=True,
+        )
         return self._ssh.run_or_raise(f"nmcli connection up {q}", use_sudo=True)
 
     def reapply_device(self, device: str) -> str:

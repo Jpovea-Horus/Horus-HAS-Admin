@@ -76,9 +76,10 @@ def _menu_ip_profile(api: HasControllerAPI, device_filter: str) -> None:
     opts = [
         ("1", "IP dinámica (DHCP)"),
         ("2", "IP estática"),
+        ("3", "Servidores DNS"),
     ]
     if device_filter == "ethernet":
-        opts.append(("3", "Re-aplicar interfaz"))
+        opts.append(("4", "Re-aplicar interfaz"))
     opts.append(("", ""))
     opts.append(("0", "Volver"))
     menu_options("Configuración IP", opts)
@@ -88,20 +89,57 @@ def _menu_ip_profile(api: HasControllerAPI, device_filter: str) -> None:
             if confirm(f"¿Aplicar DHCP en '{profile}'?", default=False):
                 api.network.set_dhcp(profile)
                 success("DHCP aplicado correctamente.")
+                if prof.ipv4_dns and confirm(
+                    f"El perfil tiene DNS manual ({prof.ipv4_dns}). ¿Usar los DNS del DHCP?",
+                    default=True,
+                ):
+                    api.network.reset_dns_auto(profile)
+                    success("DNS automáticos (DHCP) restaurados.")
         elif op == "2":
             addr = ask("IP/máscara CIDR", default="192.168.1.50/24")
             gw = ask("Gateway", default="192.168.1.1")
-            dns = ask("DNS (opcional)", default="")
+            dns = ask("DNS separados por coma", default=prof.ipv4_dns or "8.8.8.8,1.1.1.1")
             warning("Si cambia la IP del host, la sesión SSH puede cortarse.")
             info("Use C en el menú principal para reconectar a la nueva IP.")
             if confirm("¿Aplicar IP estática?", default=False):
                 api.network.set_static_ip(profile, addr, gw, dns or None)
                 success("IP estática aplicada.")
-        elif op == "3" and device_filter == "ethernet":
+        elif op == "3":
+            _menu_dns(api, profile, prof)
+        elif op == "4" and device_filter == "ethernet":
             api.network.reapply_device(device)
             success("Interfaz re-aplicada.")
     except HasApiError as exc:
         error(str(exc))
+
+
+def _menu_dns(api: HasControllerAPI, profile: str, prof) -> None:
+    is_dhcp = prof.ipv4_method == "auto"
+    opts = [("1", "DNS manuales (reemplazan a los del DHCP)" if is_dhcp else "DNS manuales")]
+    if is_dhcp:
+        opts.append(("2", "DNS manuales + DNS del DHCP"))
+        opts.append(("3", "DNS automáticos (DHCP)"))
+    else:
+        opts.append(("3", "Quitar DNS manuales"))
+    opts += [("", ""), ("0", "Volver")]
+    menu_options("Servidores DNS IPv4", opts)
+    op = ask("Opción")
+
+    if op == "1" or (op == "2" and is_dhcp):
+        dns = ask("DNS separados por coma", default=prof.ipv4_dns or "8.8.8.8,1.1.1.1")
+        servers = api.network.parse_dns_servers(dns)
+        info("La conexión se re-activa; la sesión SSH puede cortarse unos segundos.")
+        if confirm(f"¿Aplicar DNS {', '.join(servers)} en '{profile}'?", default=False):
+            api.network.set_dns(profile, dns, ignore_auto=(op == "1"))
+            success("DNS aplicados.")
+    elif op == "3":
+        if not is_dhcp:
+            warning("Con IP estática y sin DNS el controlador no resolverá nombres.")
+        if confirm(f"¿Eliminar DNS manuales en '{profile}'?", default=False):
+            api.network.reset_dns_auto(profile)
+            success("DNS manuales eliminados.")
+    elif op != "0":
+        warning("Opción no válida.")
 
 
 def menu_ethernet(api: HasControllerAPI) -> None:

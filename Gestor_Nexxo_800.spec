@@ -31,6 +31,9 @@ if os.path.isdir(os.path.join(admin_network_src, "host")):
     extra_datas.append((os.path.join(admin_network_src, "host"), "integrations/admin_network/host"))
 if os.path.isdir(helper_cc):
     extra_datas.append((helper_cc, "integrations/helper_manager/custom_components"))
+blueprint_src = os.path.join(INTEGRATIONS_SRC, "blueprint_manager")
+if os.path.isfile(os.path.join(blueprint_src, "manifest.json")):
+    extra_datas.append((blueprint_src, "integrations/blueprint_manager"))
 if os.path.isdir(zwave_panel_src):
     extra_datas.append((zwave_panel_src, "integrations/panel_zwave_js_ui"))
 hacs_src = os.path.join(INTEGRATIONS_SRC, "hacs")

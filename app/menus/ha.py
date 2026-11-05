@@ -20,6 +20,7 @@ from ui import (
     panel_ha_users,
     panel_hacs,
     panel_helper_manager,
+    panel_blueprint_manager,
     panel_hostname,
     panel_plugin_service,
     panel_admin_network,
@@ -725,6 +726,86 @@ def menu_helper_manager(api: HasControllerAPI) -> None:
             error(str(exc))
 
 
+def menu_blueprint_manager(api: HasControllerAPI) -> None:
+    from paths import get_local_blueprint_manager_source
+
+    default_local = get_local_blueprint_manager_source()
+    while True:
+        section("Blueprint Manager (gestor de planos)")
+        try:
+            status = api.get_blueprint_manager_status()
+        except HasApiError as exc:
+            error(str(exc))
+            break
+
+        panel_blueprint_manager(status)
+        if status.component_exists:
+            success("Integración presente en custom_components/.")
+        elif status.parent_exists:
+            warning("Falta blueprint_manager en custom_components/.")
+        else:
+            error("No se encontró custom_components/ en la ruta esperada.")
+
+        menu_options(
+            "Acciones",
+            [
+                ("1", "Actualizar verificación"),
+                ("2", "Subir / instalar desde carpeta local"),
+                ("3", "Eliminar blueprint_manager"),
+                ("4", "Reiniciar Home Assistant"),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                continue
+            if op == "2":
+                local = ask_confirmed_path("blueprint_manager", default_local)
+                if not local:
+                    warning("Ruta vacía.")
+                    continue
+                default_local = local
+                if not api.get_helper_manager_status().component_exists:
+                    warning(
+                        "Falta helper_manager en el controlador: Blueprint Manager depende "
+                        "de él y HA no lo cargará. Instálelo primero (opción 3 del Gestor)."
+                    )
+                    if not confirm("¿Subir blueprint_manager de todos modos?", default=False):
+                        continue
+                if status.component_exists:
+                    warning("Ya existe; se reemplazará.")
+                if not confirm(f"¿Subir '{local}' → blueprint_manager?", default=True):
+                    continue
+                info("Subiendo por SFTP…")
+                success(api.install_blueprint_manager(local, replace=True))
+                if confirm("¿Reiniciar Home Assistant ahora para aplicar cambios?", default=True):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+                info(
+                    "En HA: Ajustes > Dispositivos y Servicios > Añadir > "
+                    "Horus Blueprint Manager. Luego recargue el navegador (Ctrl+F5)."
+                )
+            elif op == "3":
+                if not status.component_exists:
+                    info("No hay nada que eliminar.")
+                    continue
+                if confirm("¿Eliminar custom_components/blueprint_manager?", default=False):
+                    success(api.remove_blueprint_manager())
+            elif op == "4":
+                if confirm("¿Reiniciar Home Assistant?", default=False):
+                    info("Reiniciando HA…")
+                    success(api.restart_ha())
+            else:
+                warning("Opción no válida.")
+        except ValidationError as exc:
+            error(str(exc))
+        except HasApiError as exc:
+            error(str(exc))
+
+
 def menu_hacs(api: HasControllerAPI) -> None:
     from paths import get_local_hacs_source
 
@@ -1236,13 +1317,14 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                 ("1", "plugin_service (conexion energy)"),
                 ("2", "Admin Network (administrador de Redes)"),
                 ("3", "Helper Manager (administrador de Auxiliares)"),
-                ("4", "Z-Wave JS UI (panel lateral :8091)"),
-                ("5", "HACS (Home Assistant Community Store)"),
+                ("4", "Blueprint Manager (gestor de planos)"),
+                ("5", "Z-Wave JS UI (panel lateral :8091)"),
+                ("6", "HACS (Home Assistant Community Store)"),
                 ("", ""),
-                ("6", "Restaurar integraciones core sin Discovery - Recupera Historial, Logbook, Energía y Backup"),
-                ("7", "Reparar registro HA (Fix KeyError discovery_keys)"),
+                ("7", "Restaurar integraciones core sin Discovery - Recupera Historial, Logbook, Energía y Backup"),
+                ("8", "Reparar registro HA (Fix KeyError discovery_keys)"),
                 ("", ""),
-                ("8", "Reiniciar Home Assistant"),
+                ("9", "Reiniciar Home Assistant"),
                 ("", ""),
                 ("0", "Volver"),
             ],
@@ -1258,10 +1340,12 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
             elif op == "3":
                 menu_helper_manager(api)
             elif op == "4":
-                menu_zwave_panel(api)
+                menu_blueprint_manager(api)
             elif op == "5":
-                menu_hacs(api)
+                menu_zwave_panel(api)
             elif op == "6":
+                menu_hacs(api)
+            elif op == "7":
                 if not status.core_missing:
                     info("Las integraciones core ya están cargadas. No se requieren cambios.")
                     continue
@@ -1273,7 +1357,7 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                 if confirm("¿Restaurar integraciones core y reiniciar HA?", default=True):
                     info("Escribiendo configuration.yaml y reiniciando HA…")
                     success(api.restore_ha_core_integrations(restart=True))
-            elif op == "7":
+            elif op == "8":
                 warning(
                     "Esta reparación añade discovery_keys faltantes al registro de HA. "
                     "Soluciona integraciones que no aparecen."
@@ -1283,7 +1367,7 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                     success(api.repair_ha_config_entries())
                     info("Reiniciando Home Assistant para aplicar cambios…")
                     success(api.restart_ha())
-            elif op == "8":
+            elif op == "9":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
                     info("Reiniciando HA…")
                     success(api.restart_ha())

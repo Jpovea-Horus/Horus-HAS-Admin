@@ -47,6 +47,7 @@ def user_data_file(name: str) -> str:
     return new_path
 
 INTEGRATION_ADMIN_NETWORK = "admin_network"
+INTEGRATION_BLUEPRINT = "blueprint_manager"
 INTEGRATION_HELPER = "helper_manager"
 INTEGRATION_HACS = "hacs"
 INTEGRATION_ZWAVE_PANEL = "panel_zwave_js_ui"
@@ -157,6 +158,10 @@ def get_local_admin_network_source() -> str:
 
 def get_local_helper_manager_source() -> str:
     return find_integration_dir(INTEGRATION_HELPER)
+
+
+def get_local_blueprint_manager_source() -> str:
+    return find_integration_dir(INTEGRATION_BLUEPRINT)
 
 
 def get_local_hacs_source() -> str:

@@ -68,8 +68,8 @@ En el menú principal, **C** cambia de controlador o reconecta (útil tras IP es
 ## Menú principal
 
 1. Estado de red  
-2. Ethernet (DHCP / estática)  
-3. Wi-Fi  
+2. Ethernet (DHCP / estática / DNS IPv4)  
+3. Wi-Fi (incluye DHCP / estática / DNS IPv4)  
 4. Conexión remota (ZeroTier, Cloudflare en el controlador)  
 5. Home Assistant (usuarios, `configuration.yaml`, integraciones, actualización)  
 6. Backups y espacio en disco  

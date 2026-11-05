@@ -91,6 +91,7 @@ class HasControllerAPI:
         self.plugin_service = PluginServiceManager(self.ssh)
         self.admin_network_ha = HaIntegrationManager(self.ssh, "admin_network")
         self.helper_manager = HaIntegrationManager(self.ssh, "helper_manager")
+        self.blueprint_manager = HaIntegrationManager(self.ssh, "blueprint_manager")
         self.zwave_panel = ZwavePanelManager(self.ssh)
         self.admin_network_host = AdminNetworkHostManager(self.ssh)
         self.debian_repair = DebianRepairManager(self.ssh)
@@ -360,6 +361,15 @@ class HasControllerAPI:
 
     def remove_helper_manager(self) -> str:
         return self.helper_manager.remove()
+
+    def get_blueprint_manager_status(self) -> HaIntegrationStatus:
+        return self.blueprint_manager.get_status()
+
+    def install_blueprint_manager(self, local_path: str, replace: bool = True) -> str:
+        return self.blueprint_manager.install(local_path, replace=replace)
+
+    def remove_blueprint_manager(self) -> str:
+        return self.blueprint_manager.remove()
 
     def get_hacs_status(self) -> HacsStatus:
         return self.hacs.get_status()

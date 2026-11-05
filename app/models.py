@@ -38,6 +38,8 @@ class ConnectionProfile:
     ipv4_addresses: str
     ipv4_gateway: str
     ipv4_dns: str
+    ipv4_ignore_auto_dns: str = ""
+    ipv4_dns_active: str = ""
 
 
 @dataclass

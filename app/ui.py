@@ -393,13 +393,18 @@ def log_line(line: str, level: str) -> None:
 def panel_profile(profile: str, prof) -> None:
     method = prof.ipv4_method or "desconocido"
     method_style = "success" if method == "auto" else "warning"
+    if prof.ipv4_dns:
+        dns_mode = "manual" if prof.ipv4_ignore_auto_dns == "yes" or method != "auto" else "manual + DHCP"
+    else:
+        dns_mode = "automático (DHCP)" if method == "auto" else "sin DNS"
     console.print(
         Panel(
             f"[info]Perfil:[/info] [bold]{profile}[/bold]\n"
             f"[info]IPv4:[/info] [{method_style}]{method}[/{method_style}]\n"
             f"[info]IP:[/info] {prof.ipv4_addresses or '-'}\n"
             f"[info]Gateway:[/info] {prof.ipv4_gateway or '-'}\n"
-            f"[info]DNS:[/info] {prof.ipv4_dns or '-'}",
+            f"[info]DNS configurado:[/info] {prof.ipv4_dns or '-'} ({dns_mode})\n"
+            f"[info]DNS en uso:[/info] {prof.ipv4_dns_active or '-'}",
             title="Perfil de conexión",
             border_style="cyan",
             box=box.ROUNDED,
@@ -1065,6 +1070,43 @@ def panel_helper_manager(status: HaIntegrationStatus) -> None:
         body.append(f"domain: {status.manifest_domain}\n", style="dim")
     body.append(
         "\nTras instalar: reinicie HA y añada 'Horus Helper Manager' en la UI.\n",
+        style="dim",
+    )
+    if status.error:
+        body.append(f"\n{status.error}\n", style="bold red")
+
+    console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+
+def panel_blueprint_manager(status: HaIntegrationStatus) -> None:
+    """Panel custom component blueprint_manager."""
+    if status.error and not status.parent_exists:
+        border = "red"
+    elif status.component_exists:
+        border = "green"
+    else:
+        border = "yellow"
+
+    body = Text()
+    body.append("BLUEPRINT MANAGER — GESTOR DE BLUEPRINTS\n", style="bold underline")
+    body.append("---------------------------------------\n")
+    body.append(f"Ruta: {status.component_dir}\n", style="dim")
+    body.append("custom_components/: ", style="info")
+    body.append(
+        "existe\n" if status.parent_exists else "NO existe\n",
+        style="success" if status.parent_exists else "bold red",
+    )
+    body.append("blueprint_manager: ", style="info")
+    body.append(
+        "PRESENTE\n" if status.component_exists else "AUSENTE\n",
+        style="success" if status.component_exists else "bold yellow",
+    )
+    if status.manifest_version:
+        body.append(f"versión: {status.manifest_version}\n", style="dim")
+    if status.manifest_domain:
+        body.append(f"domain: {status.manifest_domain}\n", style="dim")
+    body.append(
+        "\nTras instalar y reiniciar HA, los Blueprints se gestionarán automáticamente.\n",
         style="dim",
     )
     if status.error:
