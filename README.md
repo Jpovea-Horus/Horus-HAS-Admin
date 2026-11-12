@@ -69,16 +69,30 @@ En el menú principal, **C** cambia de controlador o reconecta (útil tras IP es
 
 1. Estado de red  
 2. Ethernet (DHCP / estática / DNS IPv4)  
-3. Wi-Fi (incluye DHCP / estática / DNS IPv4)  
+3. Wi-Fi (incluye DHCP / estática / DNS IPv4 y **zona Wi-Fi de rescate**)  
 4. Conexión remota (ZeroTier, Cloudflare en el controlador)  
 5. Home Assistant (usuarios, `configuration.yaml`, integraciones, actualización)  
 6. Backups y espacio en disco  
+
 7. Hostname del controlador  
 8. Diagnóstico (semáforo, logs, pruebas de red)  
 9. Corrección de errores (cellular, MQTT, APT/venv, Self-Heal, registro HA, DB, **Reloj / NTP**)  
 I. Informe de soporte (ZIP + HTML)
 
 `plugin_service`: verificar / eliminar / instalar local o GitHub / **reiniciar HA**.
+
+## Zona Wi-Fi de rescate (menú 3 → 7)
+
+Servicio en el Debian del controlador (no en Home Assistant). Si el equipo pasa 90 s sin Ethernet ni Wi-Fi cliente, enciende el punto de acceso **`Nexxo-XXXX`** (últimos 4 dígitos de la MAC Ethernet); al volver la red se apaga solo.
+
+- Contraseña por defecto: `adminhorus26*` (se puede cambiar al instalar).
+- Conectarse a `Nexxo-XXXX` y entrar con `ssh root@10.42.0.1` (opción **1 · Local** con IP `10.42.0.1`).
+- Instala: perfil NetworkManager `nexxo-hotspot`, `/usr/local/sbin/nexxo-hotspot.sh`, `/etc/nexxo-hotspot.env` y `nexxo-hotspot.timer` (cada 30 s). Si faltan, instala `iw`, `dnsmasq-base` e `iptables`.
+- Si otro `dnsmasq` ocupa el puerto 53 (DNS), al instalar se crea `/etc/NetworkManager/dnsmasq-shared.d/nexxo-hotspot.conf` con `port=0`: la zona Wi-Fi reparte IPs sin DNS propio y no se toca el servicio existente.
+- Si algo ocupa el 67 (DHCP), la zona Wi-Fi no puede dar IPs («IP configuration could not be reserved»); el panel lo marca en rojo.
+- Con una sola radio, el hotspot sin clientes se apaga cada 10 min para reintentar el Wi-Fi cliente guardado.
+- **Encender ahora** lo deja forzado hasta **Apagar** o reiniciar. Registro: `journalctl -t nexxo-hotspot`.
+- Requiere chip Wi-Fi con modo AP (`iw list`). La primera instalación se hace por Ethernet.
 
 ## Actualizar Home Assistant + Z-Wave JS UI (v2)
 

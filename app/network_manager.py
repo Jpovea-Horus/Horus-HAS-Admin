@@ -11,6 +11,8 @@ from exceptions import SSHCommandError, ValidationError
 from models import ConnectionProfile, NetworkDevice, NetworkStatus, WifiDiagnoseStatus, WifiNetwork
 from ssh_client import SSHClient
 
+_VIRTUAL_IFACE_PREFIXES = ("veth", "docker", "br-", "virbr", "zt", "tun", "tap", "usb")
+
 
 class NetworkManager:
     """Operaciones NetworkManager remotas (solo Ethernet y Wi-Fi)."""
@@ -206,6 +208,13 @@ class NetworkManager:
 
     def get_wifi_devices(self) -> list[NetworkDevice]:
         return [d for d in self.get_status().devices if d.device_type == "wifi"]
+
+    def get_primary_ethernet_mac(self) -> str:
+        """MAC de la Ethernet física (eth0/end0/enp*), sin interfaces de Docker/VPN."""
+        for dev in self.get_ethernet_devices():
+            if dev.mac and not dev.device.startswith(_VIRTUAL_IFACE_PREFIXES):
+                return dev.mac
+        raise SSHCommandError("No se encontró la MAC de la interfaz Ethernet física.")
 
     def diagnose_wifi(self) -> WifiDiagnoseStatus:
         """Estado WiFi: radio, dispositivos y unavailable."""

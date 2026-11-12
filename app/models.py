@@ -468,6 +468,15 @@ class HacsStatus:
 
 
 @dataclass
+class NexxoLedManagerStatus:
+    """Estado del Nexxo LED Manager (instalación desde GitHub)."""
+
+    installed: bool = False
+    version: str = ""
+    error: str = ""
+
+
+@dataclass
 class AdminNetworkHostStatus:
     """Estado del servicio host admin_network (systemd + API :8765)."""
 
@@ -485,6 +494,31 @@ class AdminNetworkHostStatus:
     wifi_watchdog_active: bool = False
     wifi_watchdog_enabled: bool = False
     error: str = ""
+
+
+@dataclass
+class HotspotStatus:
+    """Zona Wi-Fi de rescate nexxo-hotspot (perfil NM + timer systemd en el Debian)."""
+
+    expected_ssid: str = ""
+    ssid: str = ""
+    interface: str = ""
+    profile_exists: bool = False
+    script_exists: bool = False
+    timer_enabled: bool = False
+    timer_active: bool = False
+    hotspot_active: bool = False
+    forced: bool = False
+    clients: int = 0
+    port_conflicts: list[str] = field(default_factory=list)
+    dns_disabled: bool = False
+    address: str = "10.42.0.1"
+    recent_log: str = ""
+    error: str = ""
+
+    @property
+    def installed(self) -> bool:
+        return self.profile_exists and self.script_exists and self.timer_enabled
 
 
 @dataclass
@@ -562,6 +596,29 @@ class ZwavePanelStatus:
     has_iframe_zwave: bool = False
     installed: bool = False
     error: str = ""
+
+
+@dataclass
+class LovelaceCardStatus:
+    """Estado de una tarjeta Lovelace instalada sin HACS (www + lovelace_resources)."""
+
+    name: str = ""
+    repo: str = ""
+    config_dir: str = ""
+    js_path: str = ""
+    resources_path: str = ""
+    js_exists: bool = False
+    resource_registered: bool = False
+    resource_url: str = ""
+    version: str = ""
+    storage_dir_exists: bool = False
+    hacs_copy: bool = False
+    yaml_resource_mode: bool = False
+    error: str = ""
+
+    @property
+    def installed(self) -> bool:
+        return self.js_exists and self.resource_registered
 
 
 @dataclass

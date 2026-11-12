@@ -22,8 +22,10 @@ from ui import (
     panel_helper_manager,
     panel_blueprint_manager,
     panel_hostname,
+    panel_lovelace_card,
     panel_plugin_service,
     panel_admin_network,
+    panel_nexxo_led,
     panel_yaml_content,
     panel_zwave_panel,
     section,
@@ -1024,7 +1026,7 @@ def menu_ha_configuration(api: HasControllerAPI) -> None:
             warning(
                 f"Faltan integraciones core ({', '.join(status.core_missing)}). "
                 "Restáurelas en Home Assistant → Gestor de "
-                "Integraciones → 'Restaurar integraciones core' (no use la opción 5 "
+                "Integraciones → 9 Revisión Integraciones Nativas (no use la opción 5 "
                 "de este menú: esa activa Discovery)."
             )
         if status.yaml_includes_ok:
@@ -1327,23 +1329,197 @@ def _menu_delete_ha_yaml(api: HasControllerAPI) -> None:
             error(str(exc))
 
 
-def menu_ha_integrations(api: HasControllerAPI) -> None:
+def menu_nexxo_led(api: HasControllerAPI) -> None:
     while True:
+        section("Nexxo LED Manager")
         try:
-            with working("Analizando configuración de Home Assistant…"):
-                status = api.get_ha_configuration_status()
+            with working("Verificando Nexxo LED Manager…"):
+                status = api.get_nexxo_led_status()
         except HasApiError as exc:
             error(str(exc))
             break
 
-        section("Gestor de Integraciones")
+        panel_nexxo_led(status)
+        
+        menu_options(
+            "Acciones",
+            [
+                ("1", "Actualizar verificación"),
+                ("2", "Instalar / Actualizar Nexxo LED Manager"),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                continue
+            elif op == "2":
+                if confirm("¿Ejecutar instalación/actualización desde GitHub?", default=True):
+                    with working("Instalando Nexxo LED Manager (GitHub)…"):
+                        success(api.install_nexxo_led())
+            else:
+                warning("Opción no válida.")
+        except HasApiError as exc:
+            error(str(exc))
 
+
+def menu_camera_gallery(api: HasControllerAPI) -> None:
+    from paths import get_local_camera_gallery_source
+
+    default_local = get_local_camera_gallery_source()
+    while True:
+        section("Camera Gallery Card (tarjeta Lovelace)")
+        try:
+            with working("Verificando Camera Gallery Card…"):
+                status = api.get_camera_gallery_status()
+        except HasApiError as exc:
+            error(str(exc))
+            break
+
+        panel_lovelace_card(status)
+        if status.installed:
+            success("Camera Gallery Card instalada (JS + recurso Lovelace).")
+        elif status.js_exists or status.resource_registered:
+            warning("Instalación incompleta: falta el JS o el recurso. Reinstale.")
+        else:
+            warning("Camera Gallery Card no está instalada en este controlador.")
+
+        menu_options(
+            "Acciones",
+            [
+                ("1", "Actualizar verificación"),
+                ("2", "Instalar / actualizar descargando desde GitHub (en el controlador)"),
+                ("3", "Subir / instalar desde carpeta local o camera-gallery-card.js"),
+                ("4", "Eliminar Camera Gallery Card"),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                continue
+            if op in ("2", "3"):
+                if status.installed:
+                    warning("Ya existe; se reemplazará el JS y se actualizará el recurso.")
+                if op == "2":
+                    if not confirm(
+                        "¿Descargar el último release y reiniciar Home Assistant?",
+                        default=True,
+                    ):
+                        continue
+                    with working("Descargando desde GitHub y reiniciando HA (hasta 1 min)…"):
+                        success(api.install_camera_gallery_from_github(restart=True))
+                else:
+                    local = ask_confirmed_path(
+                        "camera_gallery_card (o camera-gallery-card.js)", default_local
+                    )
+                    if not local:
+                        warning("Ruta vacía.")
+                        continue
+                    default_local = local
+                    if not confirm(f"¿Subir '{local}' y reiniciar Home Assistant?", default=True):
+                        continue
+                    with working("Subiendo JS y reiniciando HA (hasta 1 min)…"):
+                        success(api.install_camera_gallery_from_local(local, restart=True))
+                info(
+                    "Recargue el navegador (Ctrl+F5) y añada la tarjeta desde "
+                    "Editar panel → Añadir tarjeta → Camera Gallery Card."
+                )
+            elif op == "4":
+                if not status.js_exists and not status.resource_registered:
+                    info("No hay nada que eliminar.")
+                    continue
+                if confirm(
+                    "¿Eliminar Camera Gallery Card (JS + recurso) y reiniciar HA?",
+                    default=False,
+                ):
+                    with working("Eliminando Camera Gallery Card…"):
+                        success(api.remove_camera_gallery(restart=True))
+            else:
+                warning("Opción no válida.")
+        except ValidationError as exc:
+            error(str(exc))
+        except HasApiError as exc:
+            error(str(exc))
+
+
+def menu_ha_native_integrations(api: HasControllerAPI) -> None:
+    try:
+        with working("Analizando integraciones core de Home Assistant…"):
+            status = api.get_ha_configuration_status()
+    except HasApiError as exc:
+        error(str(exc))
+        return
+
+    while True:
+        section("Revisión Integraciones Nativas")
         if status.core_missing:
             warning(
-                "Faltan integraciones core (Historial, Logbook, Energía…): "
-                "no aparecen en HA. Use opción 6 para restaurarlas sin Discovery."
+                f"Faltan integraciones core: {', '.join(status.core_missing)}. "
+                "No aparecen en HA; use la opción 1 para restaurarlas sin Discovery."
             )
+        else:
+            success("Integraciones core cargadas (Historial, Logbook, Energía, Backup…).")
+        menu_options(
+            "Revisión Integraciones Nativas",
+            [
+                (
+                    "1",
+                    "Restaurar integraciones core sin Discovery - "
+                    "Recupera Historial, Logbook, Energía y Backup",
+                ),
+                (
+                    "2",
+                    "Reparar registro HA (Fix KeyError discovery_keys) - "
+                    "Soluciona integraciones que no aparecen",
+                ),
+                ("", ""),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                if not status.core_missing:
+                    info("Las integraciones core ya están cargadas. No se requieren cambios.")
+                    continue
+                warning(
+                    f"Se añadirán: {', '.join(status.core_missing)} "
+                    "(sin dhcp/ssdp/zeroconf/usb/bluetooth). "
+                    "Backup .bak.horus.core y reinicio de HA."
+                )
+                if confirm("¿Restaurar integraciones core y reiniciar HA?", default=True):
+                    with working("Escribiendo configuration.yaml y reiniciando HA…"):
+                        success(api.restore_ha_core_integrations(restart=True))
+                    break
+            elif op == "2":
+                warning(
+                    "Esta reparación añade discovery_keys faltantes al registro de HA. "
+                    "Soluciona integraciones que no aparecen."
+                )
+                if confirm("¿Reparar registro de integraciones y reiniciar HA?", default=True):
+                    with working("Reparando schema de core.config_entries…"):
+                        success(api.repair_ha_config_entries())
+                    with working("Reiniciando Home Assistant para aplicar cambios…"):
+                        success(api.restart_ha())
+                    break
+            else:
+                warning("Opción no válida.")
+        except ValidationError as exc:
+            error(str(exc))
+        except HasApiError as exc:
+            error(str(exc))
 
+
+def menu_ha_integrations(api: HasControllerAPI) -> None:
+    while True:
+        section("Gestor de Integraciones")
         menu_options(
             "Gestor de Integraciones",
             [
@@ -1353,11 +1529,16 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
                 ("4", "Z-Wave JS UI (panel lateral :8091)"),
                 ("5", "Blueprint Manager (gestor de planos)"),
                 ("6", "HACS (Home Assistant Community Store)"),
+                ("7", "Nexxo LED Manager (gestor de LEDs)"),
+                ("8", "Camera Gallery Card (galería de cámaras en Lovelace, sin HACS)"),
                 ("", ""),
-                ("7", "Restaurar integraciones core sin Discovery - Recupera Historial, Logbook, Energía y Backup"),
-                ("8", "Reparar registro HA (Fix KeyError discovery_keys)"),
+                (
+                    "9",
+                    "Revisión Integraciones Nativas - "
+                    "Recupera Historial, Logbook, Energía y repara el registro de HA",
+                ),
                 ("", ""),
-                ("9", "Reiniciar Home Assistant"),
+                ("10", "Reiniciar Home Assistant"),
                 ("", ""),
                 ("0", "Volver"),
             ],
@@ -1379,28 +1560,12 @@ def menu_ha_integrations(api: HasControllerAPI) -> None:
             elif op == "6":
                 menu_hacs(api)
             elif op == "7":
-                if not status.core_missing:
-                    info("Las integraciones core ya están cargadas. No se requieren cambios.")
-                    continue
-                warning(
-                    f"Se añadirán: {', '.join(status.core_missing)} "
-                    "(sin dhcp/ssdp/zeroconf/usb/bluetooth). "
-                    "Backup .bak.horus.core y reinicio de HA."
-                )
-                if confirm("¿Restaurar integraciones core y reiniciar HA?", default=True):
-                    with working("Escribiendo configuration.yaml y reiniciando HA…"):
-                        success(api.restore_ha_core_integrations(restart=True))
+                menu_nexxo_led(api)
             elif op == "8":
-                warning(
-                    "Esta reparación añade discovery_keys faltantes al registro de HA. "
-                    "Soluciona integraciones que no aparecen."
-                )
-                if confirm("¿Reparar registro de integraciones y reiniciar HA?", default=True):
-                    with working("Reparando schema de core.config_entries…"):
-                        success(api.repair_ha_config_entries())
-                    with working("Reiniciando Home Assistant para aplicar cambios…"):
-                        success(api.restart_ha())
+                menu_camera_gallery(api)
             elif op == "9":
+                menu_ha_native_integrations(api)
+            elif op == "10":
                 if confirm("¿Reiniciar Home Assistant?", default=False):
                     with working("Reiniciando Home Assistant (hasta 1 min)…"):
                         success(api.restart_ha())

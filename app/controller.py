@@ -24,12 +24,15 @@ from ha_update_manager import HaUpdateManager
 from ha_users_manager import HaUsersManager
 from hacs_manager import HacsManager
 from hostname_manager import HostnameManager
+from lovelace_card_manager import CAMERA_GALLERY, LovelaceCardManager
+from hotspot_manager import HotspotManager
 from mqtt_manager import MqttManager
 from plugin_service_manager import PluginServiceManager
 from ha_integration_manager import HaIntegrationManager
 from admin_network_host_manager import AdminNetworkHostManager
 from clock_manager import ClockManager
 from debian_repair_manager import DebianRepairManager
+from nexxo_led_manager import NexxoLedManager
 from remote_backup_manager import RemoteBackupManager
 from self_heal_manager import SelfHealManager
 from support_manager import SupportManager
@@ -49,10 +52,12 @@ from models import (
     HaUser,
     HaUsersStatus,
     HostnameInfo,
+    HotspotStatus,
     HorusArchive,
     HorusArchiveInfo,
     HorusBackupStatus,
     HorusJobResult,
+    LovelaceCardStatus,
     MaintenanceStatus,
     MqttDiagnosticStatus,
     NetworkStatus,
@@ -61,6 +66,7 @@ from models import (
     AdminNetworkInstallStatus,
     DebianRepairStatus,
     HaIntegrationStatus,
+    NexxoLedManagerStatus,
     SelfHealStatus,
     WifiDiagnoseStatus,
     ZwavePanelStatus,
@@ -83,6 +89,7 @@ class HasControllerAPI:
     def __init__(self, timeout: int = 15):
         self.ssh = SSHClient(timeout=timeout)
         self.network = NetworkManager(self.ssh)
+        self.hotspot = HotspotManager(self.ssh, self.network)
         self.hostname = HostnameManager(self.ssh)
         self.zerotier = ZeroTierCheck(self.ssh)
         self.cellular = CellularManager(self.ssh)
@@ -94,11 +101,13 @@ class HasControllerAPI:
         self.blueprint_manager = HaIntegrationManager(self.ssh, "blueprint_manager")
         self.zwave_panel = ZwavePanelManager(self.ssh)
         self.admin_network_host = AdminNetworkHostManager(self.ssh)
+        self.nexxo_led = NexxoLedManager(self.ssh)
         self.debian_repair = DebianRepairManager(self.ssh)
         self.clock = ClockManager(self.ssh)
         self.ha_config = HaConfigManager(self.ssh)
         self.ha_theme = HaThemeManager(self.ssh, self.ha_config)
         self.hacs = HacsManager(self.ssh, self.ha_config)
+        self.camera_gallery = LovelaceCardManager(self.ssh, self.ha_config, CAMERA_GALLERY)
         self.self_heal = SelfHealManager(self.ssh, self.ha_config)
         self.cloudflare = CloudflareManager(self.ssh)
         self.backups = BackupManager(self.ssh)
@@ -286,6 +295,12 @@ class HasControllerAPI:
     def remove_admin_network_host(self, wipe_env: bool = False) -> str:
         return self.admin_network_host.remove(wipe_env=wipe_env)
 
+    def get_nexxo_led_status(self) -> NexxoLedManagerStatus:
+        return self.nexxo_led.get_status()
+
+    def install_nexxo_led(self) -> str:
+        return self.nexxo_led.install_or_update()
+
     def get_admin_network_api_key(self) -> str:
         return self.admin_network_host.read_api_key()
 
@@ -328,6 +343,24 @@ class HasControllerAPI:
 
     def repair_wifi(self, force_nm_restart: bool = True) -> str:
         return self.network.repair_wifi(force_nm_restart=force_nm_restart)
+
+    def get_hotspot_status(self) -> HotspotStatus:
+        return self.hotspot.get_status()
+
+    def install_hotspot(self, password: str, wifi_device: str | None = None) -> str:
+        return self.hotspot.install(password, wifi_device=wifi_device)
+
+    def start_hotspot(self) -> str:
+        return self.hotspot.start()
+
+    def stop_hotspot(self) -> str:
+        return self.hotspot.stop()
+
+    def remove_hotspot(self) -> str:
+        return self.hotspot.remove()
+
+    def get_hotspot_password(self) -> str:
+        return self.hotspot.get_password()
 
     def get_debian_repair_status(self) -> DebianRepairStatus:
         return self.debian_repair.get_status()
@@ -382,6 +415,18 @@ class HasControllerAPI:
 
     def remove_hacs(self) -> str:
         return self.hacs.remove()
+
+    def get_camera_gallery_status(self) -> LovelaceCardStatus:
+        return self.camera_gallery.get_status()
+
+    def install_camera_gallery_from_github(self, restart: bool = True) -> str:
+        return self.camera_gallery.install_from_github(restart=restart)
+
+    def install_camera_gallery_from_local(self, local_path: str, restart: bool = True) -> str:
+        return self.camera_gallery.install_from_local(local_path, restart=restart)
+
+    def remove_camera_gallery(self, restart: bool = True) -> str:
+        return self.camera_gallery.remove(restart=restart)
 
     def get_zwave_panel_status(self) -> ZwavePanelStatus:
         return self.zwave_panel.get_status()

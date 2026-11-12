@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from controller import HasControllerAPI
 from exceptions import HasApiError
+from hotspot_manager import DEFAULT_PASSWORD as DEFAULT_HOTSPOT_PASSWORD
 from ui import (
     ask,
     ask_int,
@@ -12,6 +13,7 @@ from ui import (
     error,
     info,
     menu_options,
+    panel_hotspot,
     panel_ip_output,
     panel_ping,
     panel_profile,
@@ -172,6 +174,7 @@ def menu_wifi(api: HasControllerAPI) -> None:
                 ("4", "Configurar IP (DHCP / estática)"),
                 ("5", "Diagnosticar WiFi"),
                 ("6", "Reparar WiFi (si scan vacío / unavailable)"),
+                ("7", "Zona Wi-Fi de rescate (Nexxo-XXXX)"),
                 ("", ""),
                 ("0", "Volver al menú principal"),
             ],
@@ -238,6 +241,66 @@ def menu_wifi(api: HasControllerAPI) -> None:
                     with working("Reparando Wi-Fi (puede reiniciar NetworkManager)…"):
                         result = api.repair_wifi(force_nm_restart=True)
                     success(result)
+            elif op == "7":
+                menu_hotspot(api)
+            else:
+                warning("Opción no válida.")
+        except HasApiError as exc:
+            error(str(exc))
+
+
+def menu_hotspot(api: HasControllerAPI) -> None:
+    while True:
+        section("Zona Wi-Fi de rescate")
+        try:
+            with working("Leyendo estado de la zona Wi-Fi…"):
+                status = api.get_hotspot_status()
+        except HasApiError as exc:
+            error(str(exc))
+            return
+        panel_hotspot(status)
+        menu_options(
+            "Zona Wi-Fi",
+            [
+                ("1", "Instalar / reinstalar"),
+                ("2", "Encender ahora (forzada)"),
+                ("3", "Apagar (vuelve a modo automático)"),
+                ("4", "Mostrar contraseña"),
+                ("5", "Eliminar"),
+                ("", ""),
+                ("0", "Volver"),
+            ],
+        )
+        op = ask("Opción")
+        if op == "0":
+            break
+        try:
+            if op == "1":
+                info(f"SSID: [bold]{status.expected_ssid}[/bold] · IP del controlador: {status.address}")
+                pwd = ask("Contraseña WPA2 (8-63)", default=DEFAULT_HOTSPOT_PASSWORD)
+                if confirm("¿Instalar la zona Wi-Fi de rescate?", default=True):
+                    with working("Instalando zona Wi-Fi (puede instalar iw / dnsmasq-base / iptables)…"):
+                        result = api.install_hotspot(pwd)
+                    success(result)
+                    info(f"Contraseña: [bold]{pwd}[/bold]")
+            elif op == "2":
+                if not status.installed:
+                    warning("Instale primero la zona Wi-Fi (opción 1).")
+                    continue
+                warning("Si esta sesión SSH va por Wi-Fi cliente, se cortará.")
+                if confirm("¿Encender la zona Wi-Fi ahora?", default=False):
+                    with working("Encendiendo zona Wi-Fi…"):
+                        success(api.start_hotspot())
+            elif op == "3":
+                with working("Apagando zona Wi-Fi…"):
+                    success(api.stop_hotspot())
+            elif op == "4":
+                with working("Leyendo contraseña…"):
+                    info(f"Contraseña de {status.ssid or status.expected_ssid}: [bold]{api.get_hotspot_password()}[/bold]")
+            elif op == "5":
+                if confirm("¿Eliminar la zona Wi-Fi de rescate?", default=False):
+                    with working("Eliminando zona Wi-Fi…"):
+                        success(api.remove_hotspot())
             else:
                 warning("Opción no válida.")
         except HasApiError as exc:

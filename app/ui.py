@@ -35,14 +35,17 @@ from models import (
     HaUser,
     HaUsersStatus,
     HealthCheckStatus,
+    HotspotStatus,
     NetworkTestItem,
     NetworkTestReport,
     HorusArchive,
     HorusBackupStatus,
     HorusSnapshot,
+    LovelaceCardStatus,
     MaintenanceStatus,
     MqttDiagnosticStatus,
     PluginServiceStatus,
+    NexxoLedManagerStatus,
     SystemHealthStatus,
     AdminNetworkInstallStatus,
     WifiNetwork,
@@ -1102,6 +1105,100 @@ def panel_admin_network(status: AdminNetworkInstallStatus) -> None:
     console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
 
 
+def panel_nexxo_led(status: NexxoLedManagerStatus) -> None:
+    """Panel para el Nexxo LED Manager."""
+    if status.error:
+        border = "red"
+    elif status.installed:
+        border = "green"
+    else:
+        border = "yellow"
+
+    body = Text()
+    body.append("NEXXO LED MANAGER\n", style="bold underline")
+    body.append("-----------------\n")
+    body.append("Estado: ", style="info")
+    body.append(
+        "INSTALADO\n" if status.installed else "NO INSTALADO\n",
+        style="success" if status.installed else "bold yellow",
+    )
+    if status.version:
+        body.append(f"Versión: {status.version}\n", style="dim")
+    
+    body.append(
+        "\nEste gestor permite controlar los LEDs del Nexxo 800 desde el sistema.\n",
+        style="dim",
+    )
+    if status.error:
+        body.append(f"\nError: {status.error}\n", style="bold red")
+
+    console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+
+def panel_hotspot(status: HotspotStatus) -> None:
+    """Zona Wi-Fi de rescate nexxo-hotspot."""
+    if status.error or status.port_conflicts:
+        border = "red"
+    elif status.installed and status.timer_active:
+        border = "green"
+    else:
+        border = "yellow"
+
+    body = Text()
+    body.append("ZONA WI-FI DE RESCATE\n", style="bold underline")
+    body.append("---------------------\n")
+    body.append("SSID esperado (MAC Ethernet): ", style="info")
+    body.append(f"{status.expected_ssid or '?'}\n", style="bold")
+    if status.ssid and status.ssid != status.expected_ssid:
+        body.append("SSID instalado: ", style="info")
+        body.append(f"{status.ssid} (distinto: reinstale)\n", style="bold yellow")
+    body.append("Perfil NetworkManager: ", style="info")
+    body.append(
+        f"presente ({status.interface})\n" if status.profile_exists else "AUSENTE\n",
+        style="success" if status.profile_exists else "bold yellow",
+    )
+    body.append("Timer automático: ", style="info")
+    if status.timer_active:
+        body.append("activo (cada 30 s)\n", style="success")
+    elif status.timer_enabled:
+        body.append("habilitado pero inactivo\n", style="bold yellow")
+    else:
+        body.append("AUSENTE\n", style="bold yellow")
+    body.append("Zona Wi-Fi: ", style="info")
+    if status.hotspot_active:
+        mode = "forzada" if status.forced else "automática"
+        body.append(
+            f"ENCENDIDA ({mode}) · {status.clients} cliente(s) · SSH root@{status.address}\n",
+            style="success",
+        )
+    else:
+        body.append("apagada\n", style="dim")
+
+    if status.dns_disabled:
+        body.append("DNS propio: ", style="info")
+        body.append("desactivado (el 53 lo usa otro dnsmasq; solo reparte IPs)\n", style="dim")
+    if status.port_conflicts:
+        body.append("Puertos DNS/DHCP (53/67): ", style="info")
+        body.append(
+            f"OCUPADOS por {', '.join(status.port_conflicts)} — la zona Wi-Fi no podrá dar IPs\n",
+            style="bold red",
+        )
+
+    if status.recent_log:
+        body.append("\nÚltimos eventos:\n", style="accent")
+        body.append(f"{status.recent_log}\n", style="dim")
+
+    body.append(
+        "\nSe enciende sola si el controlador pasa 90 s sin Ethernet ni Wi-Fi cliente; "
+        "se apaga al volver la red.\n",
+        style="dim",
+    )
+    if status.error:
+        body.append(f"\n{status.error}\n", style="bold red")
+
+    console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+
 def panel_helper_manager(status: HaIntegrationStatus) -> None:
     """Panel custom component helper_manager."""
     if status.error and not status.parent_exists:
@@ -1260,6 +1357,56 @@ def panel_zwave_panel(status: ZwavePanelStatus) -> None:
         "\nIframe: LAN/ZeroTier → host:8091 · "
         "Cloudflare → https://zwave-{host}.rhorus.com\n"
         "Tras actualizar el JS, reinstale el panel y reinicie HA.\n",
+        style="dim",
+    )
+    if status.error:
+        body.append(f"\n{status.error}\n", style="bold red")
+
+    console.print(Panel(body, border_style=border, box=box.ROUNDED, padding=(1, 2)))
+
+
+def panel_lovelace_card(status: LovelaceCardStatus) -> None:
+    """Tarjeta Lovelace sin HACS (www/<slug> + .storage/lovelace_resources)."""
+    if status.error:
+        border = "red"
+    elif status.installed:
+        border = "green"
+    else:
+        border = "yellow"
+
+    title = f"{status.name.upper()} — TARJETA LOVELACE"
+    body = Text()
+    body.append(f"{title}\n", style="bold underline")
+    body.append("-" * len(title) + "\n")
+    body.append(f"GitHub: {status.repo}\n", style="dim")
+    body.append("JS en www: ", style="info")
+    body.append(
+        "PRESENTE\n" if status.js_exists else "AUSENTE\n",
+        style="success" if status.js_exists else "bold yellow",
+    )
+    if status.js_path:
+        body.append(f"  {status.js_path}\n", style="dim")
+    body.append("Recurso Lovelace: ", style="info")
+    body.append(
+        "REGISTRADO\n" if status.resource_registered else "FALTA\n",
+        style="success" if status.resource_registered else "bold yellow",
+    )
+    if status.resource_url:
+        body.append(f"  {status.resource_url}\n", style="dim")
+    if status.version:
+        body.append(f"Versión: {status.version}\n", style="dim")
+    if status.hacs_copy:
+        body.append("Copia de HACS: ", style="info")
+        body.append("DETECTADA (elimínela en HACS para no duplicar)\n", style="bold yellow")
+    if status.yaml_resource_mode:
+        body.append("Lovelace en modo YAML: ", style="info")
+        body.append(
+            "SÍ — HA ignora lovelace_resources; añada el recurso en configuration.yaml\n",
+            style="bold red",
+        )
+    body.append(
+        "\nTras instalar: reinicie HA y recargue el navegador (Ctrl+F5). "
+        "Añada la tarjeta desde Editar panel → Añadir tarjeta.\n",
         style="dim",
     )
     if status.error:

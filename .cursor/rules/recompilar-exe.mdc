@@ -1,0 +1,28 @@
+---
+description: Recompilar dist/Gestor Nexxo 800.exe después de cambiar el código de la app
+alwaysApply: true
+---
+
+# Recompilar el .exe tras cambios
+
+Después de modificar código que entra en el ejecutable (`app/**`, `assets/**`, `Gestor_Nexxo_800.spec`, `requisitos_previos/requirements.txt`), recompila `dist/Gestor Nexxo 800.exe` antes de dar la tarea por terminada.
+
+## Cómo
+
+1. Verifica antes que compile: `py -m py_compile` sobre los archivos tocados.
+2. Ejecuta el build oficial (instala dependencias, compila con PyInstaller y firma). El `.bat` termina con `pause`, así que redirige la entrada:
+
+```powershell
+cmd /c "scripts\build_exe.bat < nul"
+```
+
+3. Confirma que el log termina en `Listo: dist\Gestor Nexxo 800.exe` y no en `[ERROR]`.
+
+## Si falla con `PermissionError: [WinError 5] ... Gestor Nexxo 800.exe`
+
+La app está abierta. **No mates el proceso sin preguntar** (puede tener una sesión SSH o una actualización en curso). Pide al usuario que la cierre y reintenta el build.
+
+## No recompilar
+
+- Si solo cambió documentación (`README.md`, `.cursor/**`) o scripts de `requisitos_previos/` que no van dentro del `.exe`.
+- En modo Ask/Plan: solo indica que hará falta recompilar.

@@ -51,6 +51,8 @@ INTEGRATION_BLUEPRINT = "blueprint_manager"
 INTEGRATION_HELPER = "helper_manager"
 INTEGRATION_HACS = "hacs"
 INTEGRATION_ZWAVE_PANEL = "panel_zwave_js_ui"
+INTEGRATION_CAMERA_GALLERY = "camera_gallery_card"
+CAMERA_GALLERY_JS = "camera-gallery-card.js"
 INTEGRATION_PLUGIN = "plugin_service"
 INTEGRATION_PLUGIN_REL = os.path.join("plugin_service_energy", "plugin_service")
 INTEGRATION_PLUGIN_AWS_CREDENTIALS = "plugin_service_aws_credentials"
@@ -93,6 +95,8 @@ def _integration_looks_valid(path: str, domain: str) -> bool:
     if domain == INTEGRATION_ADMIN_NETWORK and os.path.isfile(os.path.join(path, "host", "install.sh")):
         return True
     if domain == INTEGRATION_ZWAVE_PANEL and os.path.isfile(os.path.join(path, ZWAVE_PANEL_JS)):
+        return True
+    if domain == INTEGRATION_CAMERA_GALLERY and os.path.isfile(os.path.join(path, CAMERA_GALLERY_JS)):
         return True
     return False
 
@@ -175,6 +179,10 @@ def get_local_hacs_source() -> str:
 
 def get_local_zwave_panel_source() -> str:
     return find_integration_dir(INTEGRATION_ZWAVE_PANEL)
+
+
+def get_local_camera_gallery_source() -> str:
+    return find_integration_dir(INTEGRATION_CAMERA_GALLERY)
 
 
 def get_local_zwave_panel_js() -> str:
